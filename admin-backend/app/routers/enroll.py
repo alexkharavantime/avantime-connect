@@ -23,24 +23,35 @@ async def enroll(req: EnrollRequest):
     if not user:
         raise HTTPException(404, "Пользователь не найден")
 
+    # Атомарная выдача адреса: уникальный индекс + retry на следующий
+    device_id = None
+    ip = None
     for _ in range(50):
-        ip = await next_free_ip()
+        candidate = await next_free_ip()
         try:
-            await db.devices.insert_one({
+            res = await db.devices.insert_one({
                 "login": user["login"], "device_name": req.device_name,
-                "public_key": req.public_key, "vpn_ip": ip,
+                "public_key": req.public_key, "vpn_ip": candidate,
                 "kind": "client", "revoked": False,
                 "created_at": datetime.now(timezone.utc),
             })
+            device_id, ip = res.inserted_id, candidate
             break
         except DuplicateKeyError:
             if await db.devices.find_one({"public_key": req.public_key}):
                 raise HTTPException(409, "Устройство с таким ключом уже зарегистрировано")
-            continue
-    else:
+            continue  # адрес перехватили параллельно — берём следующий
+    if device_id is None:
         raise HTTPException(503, "Не удалось выделить адрес, повторите позже")
 
-    await wireguard.add_peer(req.public_key, ip)
+    # Завести peer; при сбое — откат записи устройства, токен НЕ расходуется
+    try:
+        await wireguard.add_peer(req.public_key, ip)
+    except Exception:
+        await db.devices.delete_one({"_id": device_id})
+        raise HTTPException(502, "Не удалось завести peer на VPN-сервере; устройство откатано")
+
+    # Токен помечаем использованным только после успеха
     await db.invites.update_one({"token": req.token}, {"$set": {"used": True}})
 
     return EnrollResponse(

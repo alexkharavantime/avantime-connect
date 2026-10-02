@@ -1,7 +1,8 @@
+# ВНИМАНИЕ: заглушка. Реальное заведение peer подключается после SSH-доступа к WG-серверу.
 async def add_peer(public_key: str, client_ip: str) -> None:
-    """TODO: завести peer на WG-сервере (AllowedIPs=client_ip/32)."""
-    raise NotImplementedError
+    # TODO: wg set wg0 peer <public_key> allowed-ips <client_ip>/32
+    return None
 
 async def remove_peer(public_key: str) -> None:
-    """TODO: отозвать peer по устройству."""
-    raise NotImplementedError
+    # TODO: wg set wg0 peer <public_key> remove
+    return None

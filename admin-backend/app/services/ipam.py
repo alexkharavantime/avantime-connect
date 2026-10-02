@@ -10,6 +10,11 @@ async def next_free_ip() -> str:
     pool = ipaddress.ip_network(settings.vpn_client_pool)
     server_net = ipaddress.ip_network(settings.server_network)
     used = await _used_ips()
+    used.update(
+        str(ipaddress.ip_address(value.strip()))
+        for value in settings.reserved_ips.split(",")
+        if value.strip()
+    )
     for host in pool.hosts():
         ip = str(host)
         if host in server_net:

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     wg_endpoint: str = "65.21.22.189:51820"
     wg_keepalive: int = 25
     wg_allowed_ips: str = "10.40.0.0/24"
-    reserved_ips: str = "10.30.0.5"
+    reserved_ips: str = "10.30.0.1,10.30.0.2,10.30.0.3,10.30.0.4,10.30.0.5,10.30.0.6,10.30.0.10"
     invite_ttl_hours: int = 72
 
     class Config:

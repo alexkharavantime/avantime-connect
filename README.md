@@ -1,16 +1,44 @@
 # Avantime Connect
 
-Утилита однократной автонастройки подключения к серверу Avantime (WireGuard + RDP/RemoteApp)
-и внутренняя админ-панель управления доступами.
+Утилита автонастройки (WireGuard + RDP/RemoteApp) и внутренняя админ-панель.
 
 ## Структура
-- `admin-backend/`  — FastAPI + MongoDB
-- `admin-frontend/` — React + TypeScript (внутренний контур)
-- `windows-client/` — WPF (.NET), клиент Windows
-- `shared/`         — контракт API (OpenAPI/JSON)
-- `docs/`           — ТЗ, план, сеть, безопасность
+- admin-backend/  — FastAPI + MongoDB (Фаза 1)
+- admin-frontend/ — React + TypeScript + Vite (Фаза 2)
+- windows-client/ — WPF (.NET) (Фаза 3, вне 1-2)
 
-## Параметры сети (см. docs/network.md)
-- WG Endpoint: 65.21.22.189:51820
-- Серверная сеть: 10.40.0.0/24 (RDP-хост 10.40.0.20)
-- VPN-клиенты: отдельный пул (НЕ 10.40.0.0/24), уникальный адрес+ключи на устройство
+## Требования
+- Python 3.11+, Node 18+, MongoDB 7 (локально или docker)
+
+## Backend
+    cd admin-backend
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
+    # Mongo: docker run -d -p 27017:27017 mongo:7
+    uvicorn app.main:app --reload        # http://localhost:8000/docs
+
+## Тесты backend (нужен запущенный MongoDB)
+    pip install -r requirements-dev.txt
+    pytest                               # использует БД avantime_connect_test
+
+## Frontend
+    cd admin-frontend
+    npm install
+    npm run build                        # tsc --noEmit && vite build
+    npm run dev                          # http://localhost:5173 (прокси /api -> :8000)
+
+## Сценарий проверки
+1. POST /api/users/           — создать пользователя
+2. POST /api/invites/{login}  — получить токен
+3. POST /api/enroll/          — token + public_key + device_name -> VPN-адрес
+4. GET  /api/devices/, POST /api/devices/{public_key}/revoke
+
+## Известные ограничения
+- app/services/wireguard.py (add_peer/remove_peer) — ЗАГЛУШКА. Реальное заведение peer
+  требует SSH к WG-серверу; в тестах используется имитация, боевой VPN не трогается.
+- Авторизации административных операций НЕТ (контур закрытый). Добавить перед деплоем.
+- Секреты/приватные ключи/токены в Git не хранятся; .env не коммитить.
+
+## Реальный WireGuard
+
+Интеграция теперь по умолчанию отключена (`wg_mode=disabled`); заглушка больше не сообщает ложный успех регистрации. Порядок установки ограниченного SSH-обработчика, настройки ключа администратора и локального запуска: [docs/WIREGUARD_INTEGRATION_RU.md](docs/WIREGUARD_INTEGRATION_RU.md). Не включать SSH-режим до завершения этих шагов. Существующий Windows-клиент остаётся каркасом.

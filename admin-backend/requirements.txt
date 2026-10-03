@@ -1,7 +1,6 @@
-fastapi
-uvicorn[standard]
-motor
-pydantic
-pydantic-settings
-python-jose[cryptography]
-passlib[bcrypt]
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+motor==3.6.0
+pymongo==4.9.2
+pydantic==2.10.4
+pydantic-settings==2.7.0

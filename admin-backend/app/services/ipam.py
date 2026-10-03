@@ -6,7 +6,7 @@ async def _used_ips():
     cur = db.devices.find({}, {"vpn_ip": 1})
     return {d["vpn_ip"] async for d in cur if d.get("vpn_ip")}
 
-async def next_free_ip() -> str:
+async def next_free_ip(occupied=()) -> str:
     pool = ipaddress.ip_network(settings.vpn_client_pool)
     server_net = ipaddress.ip_network(settings.server_network)
     used = await _used_ips()
@@ -19,7 +19,7 @@ async def next_free_ip() -> str:
         ip = str(host)
         if host in server_net:
             continue
-        if ip in used:
+        if ip in used or any(host in network for network in occupied):
             continue
         return ip
     raise RuntimeError("Пул VPN-адресов исчерпан")

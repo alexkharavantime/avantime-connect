@@ -1,8 +1,12 @@
 const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
+let adminToken = "";
+export function setAdminToken(token: string) { adminToken = token; }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" }, ...init,
+    ...init,
+    headers: { "Content-Type": "application/json", ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}), ...init?.headers },
   });
   if (!res.ok) throw new Error((await res.text()) || res.statusText);
   return res.json();
@@ -10,7 +14,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type AppType = "desktop" | "remoteapp32" | "remoteapp64";
 export interface User { login: string; full_name: string; app_type: AppType; }
-export interface Device { login: string; device_name: string; vpn_ip: string; public_key: string; revoked: boolean; }
+export interface Device { login: string; device_name: string; vpn_ip: string; public_key: string; revoked: boolean; state?: "pending" | "active" | "revoking" | "revoked"; }
 
 export const api = {
   listUsers:  () => req<User[]>("/users/"),

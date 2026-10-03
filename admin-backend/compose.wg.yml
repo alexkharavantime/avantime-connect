@@ -1,0 +1,36 @@
+# Standalone local integration stack. Different DB from earlier UI tests.
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - wg_mongo_data:/data/db
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:5173:5173"
+    environment:
+      mongo_uri: mongodb://mongo:27017
+      db_name: avantime_connect_wg
+      wg_mode: ssh
+      wg_ssh_host: "10.20.0.2"
+      wg_ssh_user: avantime-wg
+      wg_server_public_key: "${WG_SERVER_PUBLIC_KEY:?Set verified WG_SERVER_PUBLIC_KEY}"
+      admin_api_token: "${ADMIN_API_TOKEN:?Set ADMIN_API_TOKEN}"
+    volumes:
+      - "${HOME}/.ssh/avantime_connect_wg:/run/secrets/wg_ssh_key:ro"
+      - "${HOME}/.ssh/avantime_connect_known_hosts:/run/secrets/wg_known_hosts:ro"
+    depends_on:
+      - mongo
+  ui:
+    image: node:22-bookworm
+    working_dir: /app
+    volumes:
+      - ../admin-frontend:/app
+    # Vite's existing localhost:8000 proxy reaches the API via shared namespace.
+    network_mode: "service:api"
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173 --strictPort"
+    depends_on:
+      - api
+volumes:
+  wg_mongo_data:

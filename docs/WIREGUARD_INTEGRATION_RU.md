@@ -1,0 +1,152 @@
+# Avantime Connect: интеграция WireGuard (кандидат для проверки)
+
+Основа: feature/phase-1-2, коммит b8247d6. Этот пакет сам не выполняет действия на VPN-сервере, не делает commit/push/merge.
+
+## Что изменено
+
+- WireGuard-заглушки заменены SSH-вызовами. По умолчанию `wg_mode=disabled`: регистрация возвращает 503, а не ложный успех.
+- Ключ сервера проверяется через отдельный known_hosts. SSH-ключ приложения передаётся контейнеру read-only; в репозитории его нет.
+- Корневой обработчик принимает только JSON `status`, `add`, `remove`. Путь, интерфейс wg0 и клиентский пул фиксированы. Shell-команды из входных данных не исполняются.
+- Обработчик блокирует операции через flock, учитывает конфигурацию, runtime, адрес интерфейса, статический резерв и журнал собственных устройств. Чужие ключи не импортируются и не отзываются.
+- Изменения wg0.conf записываются атомарно с fsync. Применяется только конкретный peer через `wg set`; нет рестарта, setconf всего интерфейса или wg-quick save. Исходные ключи/хуки сохраняются.
+- Журнал намерений записывается до изменения конфигурации. При обрыве соединения повтор того же запроса доводит операцию до конца. Отозванные ключи и адреса остаются зарезервированы.
+- Backend атомарно закрепляет приглашение за устройством, использует lease 120 секунд и один owner UUID для повторов. При неизвестном результате SSH запись и IP не удаляются. В UI видны pending/revoking.
+- Публичный ключ проверяется как канонический base64 от 32 ненулевых байтов. Маршрут отзыва поддерживает `/` внутри настоящих ключей.
+- В SSH-режиме обязателен случайный ключ администратора длиной от 32 символов. Админские API требуют Bearer; enroll использует одноразовый токен. Ключ администратора в интерфейсе хранится только в памяти вкладки.
+- Отдельная MongoDB `avantime_connect_wg` в новом Docker volume. Старые тестовые записи Mac-test не переносятся и не получают право управлять реальными peers.
+
+## Границы и условия
+
+Это локальная интеграция для контролируемой проверки, не готовый публичный сервис. Нет Windows-клиента, полноценной аутентификации пользователей/ролей, TLS reverse proxy, rate limit enroll и полного аудита. Порты опубликованы только на 127.0.0.1 Mac. Не публиковать API/админку в интернет. Bearer-ключ даёт административный доступ; не передавать его клиентам VPN.
+
+Ручные изменения wg0.conf и `wg set` во время операций приложения запрещены: сторонние инструменты не соблюдают наш flock. Проверка изменения файла уменьшает риск, но не создаёт транзакцию с произвольными внешними редакторами. Не включать SaveConfig=true. Не удалять managed.json: это доказательство владения подключениями. Его нужно резервировать вместе с wg0.conf и MongoDB.
+
+Резервированы 10.30.0.1–.6 и .10; .1 — сам сервер. Дополнительно читаются текущие IP/сети из runtime и файла. Выдаваемый адрес должен принадлежать 10.30.0.0/24. Маршруты, NAT, firewall и split-tunnel не меняются.
+
+## 1. Применение патча на Mac
+
+Распаковать пакет. В папке существующего репозитория `avantime-connect` выполнить `bash /путь/к/пакету/apply-update.sh`. Скрипт требует HEAD b8247d6 и чистых отслеживаемых файлов, проверяет патч до применения. Новая ветка/коммит не создаётся. Файлы .env и ~/.ssh не меняются.
+
+Проверить `git diff --stat`. Работающий старый API продолжает старую реализацию до пересоздания контейнера.
+
+## 2. Проверки на Mac до установки сервера
+
+Из корня репозитория (старая тестовая MongoDB должна работать):
+
+```bash
+docker run --rm --network avantime-connect-test \
+  -v "$PWD/admin-backend:/app" -w /app \
+  -e mongo_uri=mongodb://avantime-connect-test-mongo:27017 \
+  -e db_name=avantime_connect_test \
+  python:3.11-slim sh -c 'pip install -r requirements-dev.txt && python -m pytest -q'
+
+docker run --rm -v "$PWD:/repo" -w /repo python:3.11-slim \
+  sh -c 'pip install pytest==8.3.4 && python -m pytest -q tests'
+
+docker run --rm -v "$PWD/admin-frontend:/app" -w /app node:22-bookworm \
+  sh -c 'npm ci && npm run build'
+```
+
+API-тесты подменяют WireGuard тестовыми функциями: они не подключаются к общему VPN. `conftest.py` принудительно использует БД avantime_connect_test. Запускать только с отдельной тестовой MongoDB, как показано выше.
+
+## 3. Установка ограниченного обработчика на VM 101
+
+Только после проверки патча. На Mac включён VPN, доступен 10.20.0.2. Пользователь avantime-wg и его ключ уже созданы. Файл ~/.ssh/avantime_connect_known_hosts содержит ключ, сверенный с консолью Proxmox.
+
+Из корня репозитория Mac:
+
+```bash
+ssh -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/avantime_connect_known_hosts" \
+  vpnadmin@10.20.0.2 'mkdir -p ~/avantime-wg-install'
+
+scp -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/avantime_connect_known_hosts" \
+  deploy/wireguard/helper.py deploy/wireguard/install-server.sh \
+  vpnadmin@10.20.0.2:avantime-wg-install/
+
+ssh -t -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/avantime_connect_known_hosts" \
+  vpnadmin@10.20.0.2 'cd ~/avantime-wg-install && sudo bash install-server.sh'
+```
+
+Установщик:
+- сохраняет исходный wg0.conf и authorized_keys в root-only /var/lib/avantime-wg-state;
+- устанавливает root-owned /usr/local/sbin/avantime-wg-helper;
+- проверяет только чтением состояние wg0;
+- даёт avantime-wg sudo только для этого файла без аргументов;
+- заменяет принудительный echo на принудительный вызов обработчика;
+- не перезапускает службы и не меняет peers.
+
+Проверка с Mac (только чтение):
+
+```bash
+printf '%s\n' '{"action":"status"}' | ssh -T \
+  -i "$HOME/.ssh/avantime_connect_wg" \
+  -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/avantime_connect_known_hosts" \
+  avantime-wg@10.20.0.2
+```
+
+Ожидаем `ok: true`, occupied и server_public_key. Ошибка — остановиться и разобрать её. Не менять режим проверки host key.
+
+## 4. Локальный запуск нового стека
+
+Остановить старые dev-ui и dev-api по одному, дождаться завершения каждой команды. Старую тестовую MongoDB не останавливать.
+
+```bash
+docker stop avantime-connect-dev-ui
+docker stop avantime-connect-dev-api
+```
+
+Сгенерировать отдельный административный токен в менеджере паролей (минимум 32 случайных символа). Ввести его скрыто в терминале Mac:
+
+```bash
+read -s -p 'Admin API token: ' ADMIN_API_TOKEN
+export ADMIN_API_TOKEN
+```
+
+Установить WG_SERVER_PUBLIC_KEY равным **проверенному публичному** ключу wg0 из статуса выше. Это не приватный ключ. Значение по умолчанию из старого config.py здесь намеренно не используется:
+
+```bash
+read -p 'WireGuard server public key: ' WG_SERVER_PUBLIC_KEY
+export WG_SERVER_PUBLIC_KEY
+
+docker compose -p avantime-connect-wg -f admin-backend/compose.wg.yml up -d --build
+docker compose -p avantime-connect-wg -f admin-backend/compose.wg.yml logs --tail=40 api ui
+```
+
+Открыть http://localhost:5173, ввести администраторский ключ. Для последующих команд compose сохранять эти переменные в текущей вкладке; токен хранить в менеджере паролей. Не запускать `docker compose config` в вывод, который отправляется другим: он раскроет токен.
+
+## 5. Контролируемая проверка реального peer
+
+Сначала проверить чтение из контейнера:
+
+```bash
+docker compose -p avantime-connect-wg -f admin-backend/compose.wg.yml exec api \
+  python -c 'import asyncio; from app.services.wireguard import occupied_networks; print(asyncio.run(occupied_networks()))'
+```
+
+Дальше создать отдельного тестового пользователя/приглашение. Для регистрации нужен настоящий новый публичный ключ WireGuard, приватный остаётся на клиентском устройстве. Не применять UI_TEST_KEY_01 и ключи уже подключённых устройств.
+
+В Swagger POST /api/enroll/ отправить token/public_key/device_name. Проверить 200, наличие peer в runtime и wg0.conf (только PublicKey/AllowedIPs, не весь файл с PrivateKey). Проверить повтор токена 409, запись в UI. Затем отозвать тестовый peer через UI и проверить его отсутствие в runtime и файле. Сравнить список старых peers до/после. Не перезагружать общий VPN для этой проверки. Настоящий tunnel handshake/RDP проверяется отдельно с клиентом; этот пакет Windows-клиент не реализует.
+
+При 502 повторить **тот же JSON** с тем же токеном/ключом/именем. Не создавать новый ключ для обхода ошибки. После аварийного завершения процесса возможен 409 до истечения lease 120 секунд. При постоянной ошибке требуется проверка журнала и совпадения конфигурации; не удалять записи/peer вслепую. При отказе из-за нового конфликта IP автоматическое переназначение не выполняется: состояние оставляется для разбора.
+
+## Откат / остановка
+
+До реальных регистраций можно вернуть authorized_keys.before-install и удалить /etc/sudoers.d/avantime-wg. После реальных регистраций сначала отозвать созданные приложением peers и подтвердить результат. Отключение SSH-ключа само по себе существующие VPN-подключения не удаляет.
+
+Не восстанавливать старый wg0.conf целиком поверх новых ручных изменений и не делать массовый restart. Согласовать изменения конфигурации и runtime для каждого принадлежащего приложению peer. Файл wg0.conf.previous — только последняя резервная копия, не полноценная история. Журнал managed.json содержит состояние, его удаление запрещено.
+
+Чтобы вернуть только изменения исходников до коммита: `git apply --check -R /путь/wireguard-integration.patch`, затем `git apply -R ...`; сначала сохранить новые локальные изменения. Это не откатывает серверную установку.
+
+## Проверки в среде подготовки
+
+- 20 backend-тестов с настоящей изолированной MongoDB 7.0.16; SSH/WireGuard в API-тестах имитируются.
+- 19 тестов root-обработчика с имитацией системных команд: чужие peers, адресные конфликты, параллельная выдача, повтор add/remove, сбой до/после применения и запрет реактивации.
+- TypeScript и production build Vite прошли.
+- Python compileall, bash -n и git diff --check прошли.
+- На VM 101 пакет не устанавливался; реальный wg, SSH forced command/sudo, Docker Compose и RDP в этой среде не проверены. Их проверка выполняется по этапам выше.
+
+Справочные первоисточники: https://www.wireguard.com/quickstart/ ; https://man.openbsd.org/sshd.8 ; https://www.sudo.ws/docs/man/sudoers.man/

@@ -1,4 +1,7 @@
 import os
+import base64
+KEY1 = base64.b64encode(bytes(range(1, 33))).decode()
+KEY2 = base64.b64encode(bytes([255]) * 32).decode()
 # отдельная тестовая БД, не трогаем рабочую
 os.environ["db_name"] = "avantime_connect_test"
 
@@ -38,7 +41,7 @@ async def test_invite_and_enroll_flow(client):
     await client.post("/api/users/", json=u)
     token = (await client.post("/api/invites/petrov")).json()["token"]
 
-    body = {"token": token, "public_key": "PUBKEY_TEST_1", "device_name": "laptop"}
+    body = {"token": token, "public_key": KEY1, "device_name": "laptop"}
     r = await client.post("/api/enroll/", json=body)
     assert r.status_code == 200
     ip = r.json()["vpn_ip"]
@@ -58,6 +61,6 @@ async def test_revoke_device(client):
     u = {"login": "sidorov", "full_name": "Сидоров С", "app_type": "desktop"}
     await client.post("/api/users/", json=u)
     token = (await client.post("/api/invites/sidorov")).json()["token"]
-    await client.post("/api/enroll/", json={"token": token, "public_key": "PK2", "device_name": "pc"})
-    r = await client.post("/api/devices/PK2/revoke")
+    await client.post("/api/enroll/", json={"token": token, "public_key": KEY2, "device_name": "pc"})
+    r = await client.post(f"/api/devices/{KEY2}/revoke")
     assert r.status_code == 200 and r.json()["status"] == "revoked"

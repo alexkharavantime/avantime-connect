@@ -42,14 +42,14 @@ def server(tmp_path, monkeypatch):
 
 def test_add_remove_idempotent_and_persistent(server):
     conf, original, peers, calls, req, _ = server
-    assert h.execute(req)['state'] == 'active'
-    assert h.execute(req)['state'] == 'active'
+    assert h.execute(req)['created'] is True
+    assert h.execute(req)['created'] is False
     assert conf.read_text().count('PublicKey = ' + NEW) == 1
     assert conf.read_text().startswith(original.rstrip())
     assert peers[OLD] == ['10.30.0.2/32']
     req['action'] = 'remove'
-    assert h.execute(req)['state'] == 'revoked'
-    assert h.execute(req)['state'] == 'revoked'
+    assert h.execute(req)['absence_confirmed'] is True
+    assert h.execute(req)['absence_confirmed'] is True
     assert NEW not in conf.read_text() and NEW not in peers
     assert OLD in conf.read_text() and OLD in peers
     req['action'] = 'add'
@@ -171,3 +171,71 @@ def test_concurrent_same_ip_only_one_owner(server):
         result = list(pool.map(apply, [req, other]))
     assert sorted(result) == [False, True]
     assert sum(n == ['10.30.0.7/32'] for n in peers.values()) == 1
+
+def test_cancel_absent_peer_preserves_tombstone_and_blocks_late_add(server):
+    conf, original, peers, calls, req, _ = server
+    cancelled = h.execute(dict(req, action='remove'))
+    assert cancelled['state'] == 'revoked' and cancelled['absence_confirmed'] is True
+    assert h.execute(dict(req, action='remove')) == cancelled
+    assert conf.read_text() == original and NEW not in peers
+    assert not any(c[1] == 'set' for c in calls)
+    record = json.loads((h.STATE / 'managed.json').read_text())[NEW]
+    assert record == {'owner': req['owner'], 'ip': req['ip'], 'state': 'revoked'}
+    with pytest.raises(h.Refused, match='reactivated'):
+        h.execute(req)
+    with pytest.raises(h.Refused, match='another operation'):
+        h.execute(dict(req, action='remove', owner=str(uuid.uuid4())))
+
+@pytest.mark.parametrize('where', ['config', 'runtime'])
+def test_remove_refuses_unmanaged_peer(server, where):
+    conf, original, peers, calls, req, _ = server
+    if where == 'config':
+        conf.write_text(original + '\n[Peer]\nPublicKey = ' + NEW + '\nAllowedIPs = 10.30.0.7/32\n')
+    else:
+        peers[NEW] = ['10.30.0.7/32']
+    before = conf.read_text()
+    with pytest.raises(h.Refused, match='Unmanaged'):
+        h.execute(dict(req, action='remove'))
+    assert conf.read_text() == before
+    assert not any(c[1] == 'set' for c in calls)
+
+def test_remove_lost_reply_after_runtime_apply(server, monkeypatch):
+    conf, original, peers, calls, req, run = server
+    h.execute(req)
+    def lose(args):
+        result = run(args)
+        if args[1:4] == ['set', 'wg0', 'peer']:
+            raise TimeoutError('remove applied, reply lost')
+        return result
+    monkeypatch.setattr(h, 'run', lose)
+    with pytest.raises(TimeoutError):
+        h.execute(dict(req, action='remove'))
+    assert NEW not in peers
+    assert json.loads((h.STATE / 'managed.json').read_text())[NEW]['state'] == 'pending_remove'
+    monkeypatch.setattr(h, 'run', run)
+    assert h.execute(dict(req, action='remove'))['absence_confirmed'] is True
+
+def test_remove_runtime_still_present_is_not_confirmed(server, monkeypatch):
+    conf, original, peers, calls, req, run = server
+    h.execute(req)
+    def ignore_remove(args):
+        if args[1:4] == ['set', 'wg0', 'peer'] and args[5] == 'remove':
+            return ''
+        return run(args)
+    monkeypatch.setattr(h, 'run', ignore_remove)
+    with pytest.raises(h.Refused, match='Runtime verification'):
+        h.execute(dict(req, action='remove'))
+    assert NEW in peers
+    assert json.loads((h.STATE / 'managed.json').read_text())[NEW]['state'] == 'pending_remove'
+
+def test_tombstone_write_failure_cannot_confirm_removal(server, monkeypatch):
+    conf, original, peers, calls, req, _ = server
+    h.execute(req)
+    atomic = h.atomic
+    def lose(path, text):
+        if path.name == 'managed.json' and json.loads(text)[NEW]['state'] == 'revoked':
+            return  # Simulate a journal that did not persist the final state.
+        atomic(path, text)
+    monkeypatch.setattr(h, 'atomic', lose)
+    with pytest.raises(h.Refused, match='Removal not confirmed'):
+        h.execute(dict(req, action='remove'))

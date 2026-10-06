@@ -3,13 +3,21 @@ import { api, User, AppType } from "../api/client";
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [login, setLogin] = useState("");
   const [fullName, setFullName] = useState("");
   const [appType, setAppType] = useState<AppType>("desktop");
   const [msg, setMsg] = useState<{ ok?: string; err?: string }>({});
   const [invite, setInvite] = useState<{ login: string; token: string } | null>(null);
 
-  const load = () => api.listUsers().then(setUsers).catch(() => {});
+  async function load() {
+    setLoading(true);
+    setLoadError("");
+    try { setUsers(await api.listUsers()); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
+  }
   useEffect(() => { load(); }, []);
 
   async function createUser() {
@@ -53,6 +61,13 @@ export default function UsersPage() {
 
       <div className="card">
         <h3>Пользователи</h3>
+        {loading && <p role="status">Загрузка пользователей…</p>}
+        {loadError && <div role="alert">
+          <p>Не удалось загрузить пользователей: {loadError}</p>
+          <button onClick={load}>Повторить</button>
+        </div>}
+        {!loading && !loadError && users.length === 0 && <p>Пользователей пока нет</p>}
+        {!loading && !loadError && users.length > 0 && (
         <table>
           <thead><tr><th>Логин</th><th>Имя</th><th>Тип</th><th></th></tr></thead>
           <tbody>
@@ -64,6 +79,7 @@ export default function UsersPage() {
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

@@ -75,3 +75,21 @@ async def test_add_requires_matching_result(monkeypatch):
     monkeypatch.setattr(wg, 'request', response)
     with pytest.raises(wg.WireGuardError, match='Unexpected'):
         await wg.add_peer(base64.b64encode(b'X' * 32).decode(), '10.30.0.7', 'owner')
+
+@pytest.mark.parametrize('confirmation', [None, False, 'true', 1])
+async def test_remove_requires_explicit_confirmation(monkeypatch, confirmation):
+    import base64
+    async def response(payload):
+        return {'ok': True, 'state': 'revoked', 'ip': '10.30.0.7', 'owner': 'owner',
+                'absence_confirmed': confirmation}
+    monkeypatch.setattr(wg, 'request', response)
+    with pytest.raises(wg.WireGuardError, match='Unexpected remove'):
+        await wg.remove_peer(base64.b64encode(b'X' * 32).decode(), '10.30.0.7', 'owner')
+
+@pytest.mark.parametrize('created', [True, False])
+async def test_add_reports_creation(monkeypatch, created):
+    import base64
+    async def response(payload):
+        return {'ok': True, 'state': 'active', 'ip': '10.30.0.7', 'owner': 'owner', 'created': created}
+    monkeypatch.setattr(wg, 'request', response)
+    assert await wg.add_peer(base64.b64encode(b'X' * 32).decode(), '10.30.0.7', 'owner') is created

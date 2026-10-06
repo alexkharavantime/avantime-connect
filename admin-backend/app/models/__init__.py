@@ -1,4 +1,5 @@
 from enum import Enum
+from datetime import datetime
 from pydantic import BaseModel
 
 class AppType(str, Enum):
@@ -24,3 +25,9 @@ class EnrollResponse(BaseModel):
     keepalive: int
     app_type: AppType
     rdp_host: str
+
+class EnrollSnapshot(EnrollResponse):
+    enrolled_token: str
+    public_key: str
+    device_name: str
+    completed_at: datetime

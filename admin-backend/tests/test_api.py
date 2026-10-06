@@ -49,9 +49,9 @@ async def test_invite_and_enroll_flow(client):
     assert not ip.startswith("10.40.0.")
     assert ip != "10.30.0.5"
 
-    # повторное использование токена запрещено
+    # Повтор той же регистрации восстанавливает сохранённый результат.
     r2 = await client.post("/api/enroll/", json=body)
-    assert r2.status_code == 409
+    assert r2.status_code == 200 and r2.json() == r.json()
 
 async def test_enroll_bad_token(client):
     body = {"token": "nope", "public_key": "X", "device_name": "d"}

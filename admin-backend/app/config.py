@@ -1,4 +1,5 @@
 from typing import Literal
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     wg_allowed_ips: str = "10.40.0.0/24"
     reserved_ips: str = "10.30.0.1,10.30.0.2,10.30.0.3,10.30.0.4,10.30.0.5,10.30.0.6,10.30.0.10"
     invite_ttl_hours: int = 72
+    # Seconds; only replays a completed enrollment, never extends a new invitation.
+    enroll_recovery_ttl: int = Field(default=24 * 60 * 60, gt=0)
 
     # Fail closed until SSH configuration and an admin credential are provided.
     wg_mode: Literal["disabled", "ssh"] = "disabled"

@@ -51,7 +51,7 @@ async def test_timeout_keeps_ip_owner_and_retry(client, monkeypatch):
     assert (await client.post('/api/enroll/', json=changed)).status_code == 409
     assert (await client.post('/api/enroll/', json=body)).status_code == 200
     assert calls[0] == calls[1]
-    assert (await client.post('/api/enroll/', json=body)).status_code == 409
+    assert (await client.post('/api/enroll/', json=body)).status_code == 200
 
 async def test_concurrent_token_only_one_peer(client, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
@@ -87,7 +87,7 @@ async def test_revoke_timeout_can_retry(client, monkeypatch):
     assert (await client.post(url)).status_code == 200
     assert calls[0] == calls[1]
     assert (await client.post(url)).status_code == 200
-    assert len(calls) == 2
+    assert len(calls) == 3  # Even an already-revoked retry reconfirms absence.
 
 async def test_invalid_key_and_unavailable_server(client, monkeypatch):
     body = await invitation(client)

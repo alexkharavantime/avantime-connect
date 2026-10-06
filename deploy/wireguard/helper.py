@@ -140,8 +140,8 @@ def execute(req):
             raise Refused('Peer belongs to another operation')
         if not record and (key in configured or key in live):
             raise Refused('Unmanaged peer: modification forbidden')
-        if not record and req['action'] == 'remove':
-            raise Refused('Unknown owner: removal forbidden')
+        # An absent, never-created peer can be cancelled. Persist its owner and
+        # tombstone below so an add delayed in SSH cannot resurrect it.
         if req['action'] == 'add' and record and record['state'] in ('pending_remove', 'revoked'):
             raise Refused('Revoked peer cannot be reactivated')
         if ip in addresses:
@@ -152,7 +152,7 @@ def execute(req):
             raise Refused('Managed config changed externally')
         if key in live and live[key] != expected:
             raise Refused('Managed runtime changed externally')
-        if req['action'] == 'add':
+        if req['action'] == 'add' or not record:
             for other, (_, nets) in configured.items():
                 if other != key and any(ipaddress.ip_address(ip) in ipaddress.ip_network(n) for n in nets):
                     raise Refused('Address occupied in config')
@@ -162,6 +162,7 @@ def execute(req):
             if any(k != key and v['ip'] == ip for k, v in managed.items()):
                 raise Refused('Address reserved by another operation')
         # Persistent journal precedes mutations: interrupted requests can be retried.
+        created = key not in live
         managed[key] = {'ip': ip, 'owner': owner, 'state': 'pending_' + req['action']}
         atomic(state_path, json.dumps(managed, sort_keys=True))
         if req['action'] == 'add':
@@ -177,14 +178,25 @@ def execute(req):
             atomic(CONF, changed)
         if req['action'] == 'add':
             run([WG, 'set', INTERFACE, 'peer', key, 'allowed-ips', ip + '/32'])
-        else:
+        elif key in live:
             run([WG, 'set', INTERFACE, 'peer', key, 'remove'])
         current = live_peers()
         if (req['action'] == 'add' and current.get(key) != expected) or (req['action'] == 'remove' and key in current):
             raise Refused('Runtime verification failed; retry same operation')
         managed[key]['state'] = 'active' if req['action'] == 'add' else 'revoked'
         atomic(state_path, json.dumps(managed, sort_keys=True))
-        return {'ok': True, 'state': managed[key]['state'], 'ip': ip, 'owner': owner}
+        result = {'ok': True, 'state': managed[key]['state'], 'ip': ip, 'owner': owner}
+        if req['action'] == 'add':
+            result['created'] = created
+        else:
+            # A tombstone is retained, not deleted: it is both proof of ownership
+            # and a permanent ban on later adds. Verify all three stores.
+            _, remaining, _ = parse_config(CONF.read_text())
+            saved = json.loads(state_path.read_text()).get(key)
+            if key in remaining or key in live_peers() or saved != managed[key]:
+                raise Refused('Removal not confirmed; retry same operation')
+            result['absence_confirmed'] = True
+        return result
 
 def main():
     try:

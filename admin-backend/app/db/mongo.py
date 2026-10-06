@@ -7,6 +7,7 @@ db = client[settings.db_name]
 async def init_indexes():
     await db.devices.create_index("vpn_ip", unique=True)
     await db.devices.create_index("public_key", unique=True)
+    await db.devices.create_index("enrolled_token", unique=True, sparse=True)
     await db.users.create_index("login", unique=True)
     await db.invites.create_index("token", unique=True)
 

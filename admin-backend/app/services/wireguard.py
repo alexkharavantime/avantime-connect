@@ -68,11 +68,14 @@ async def occupied_networks():
 async def add_peer(public_key, client_ip, owner):
     validate_public_key(public_key)
     result = await request({'action': 'add', 'public_key': public_key, 'ip': client_ip, 'owner': owner})
-    if result.get('state') != 'active' or result.get('owner') != owner or result.get('ip') != client_ip:
+    if (result.get('state') != 'active' or result.get('owner') != owner
+            or result.get('ip') != client_ip or type(result.get('created')) is not bool):
         raise WireGuardError('Unexpected add result')
+    return result['created']
 
 async def remove_peer(public_key, client_ip, owner):
     validate_public_key(public_key)
     result = await request({'action': 'remove', 'public_key': public_key, 'ip': client_ip, 'owner': owner})
-    if result.get('state') != 'revoked' or result.get('owner') != owner or result.get('ip') != client_ip:
+    if (result.get('state') != 'revoked' or result.get('owner') != owner
+            or result.get('ip') != client_ip or result.get('absence_confirmed') is not True):
         raise WireGuardError('Unexpected remove result')

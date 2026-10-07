@@ -81,9 +81,9 @@ MongoDB — отдельный локальный процесс на 127.0.0.1:
 
 | Проверка | Результат |
 |---|---|
-| Backend: `python -m pytest -q` из admin-backend | **45 passed** |
-| Helper: `python -m pytest -q tests` из корня | **25 passed** |
-| UI: `npm run test:ui` | **4 passed**, Vitest + jsdom, HTTP подменён |
+| Backend: `python -m pytest -q` из admin-backend | **45 passed**, 2026-10-06 |
+| Helper: `python -m pytest -q tests` из корня | **27 passed**, 2026-10-07 |
+| UI: `npm run test:ui` | **4 passed**, 2026-10-06, Vitest + jsdom, HTTP подменён |
 | TypeScript: `npm run typecheck` | Успешно |
 | Production build: `npm run build` | Успешно, 30 модулей |
 | Python: compileall затронутых app/tests/helper | Успешно |
@@ -113,3 +113,29 @@ IP отозванных устройств не освобождаются, пу
 PR должен оставаться draft, без merge. Итоговый SHA и подтверждение push приведены
 в итоговом сообщении агента; SHA коммита с этим отчётом можно получить командой
 `git log -1 --format=%H -- docs/PR1_REVIEW_FIXES.md`.
+
+## Дополнение по финальному review — 2026-10-07
+
+База дополнения: `291f246bb1a50e9fac050f5a7b8447aaac378bca`.
+Повтор удаления уже удалённого peer покрыт существующим тестом
+`test_add_remove_idempotent_and_persistent`; отмена никогда не созданного peer —
+`test_cancel_absent_peer_preserves_tombstone_and_blocks_late_add`.
+
+Добавлен `test_interruption_after_journal_before_any_mutation_retries` с двумя
+вариантами: add и remove. Прерывание происходит сразу после успешной записи
+pending_add/pending_remove в managed.json, до изменения wg0.conf и runtime.
+Тест проверяет неизменность обоих состояний при прерывании, сохранение owner/IP
+в журнале и завершение повторного запроса с тем же owner/IP без изменения чужого peer.
+Это отдельная точка отказа: прежние тесты прерывали операцию уже после изменения
+конфигурации, перед runtime-командой или после её применения.
+
+В WIREGUARD_INTEGRATION_RU.md явно уточнено: сторонние изменения управляемых peers
+в managed.json, wg0.conf и runtime в обход helper/flock не поддерживаются и могут
+вернуть отозванный доступ даже между запросами. Детект изменения конфигурации
+не заменяет эту эксплуатационную границу.
+
+Изменены только tests/test_wg_helper.py и два документа. Повторно выполнены все
+helper-тесты (**27 passed**), py_compile изменённого теста и git diff --check.
+Backend/UI/build повторно не запускались; их результаты выше относятся к 2026-10-06.
+VM 101 не использовалась; согласованное обновление backend/helper и реальная
+интеграционная проверка остаются условиями снятия draft.

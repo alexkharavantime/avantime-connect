@@ -118,6 +118,46 @@ def test_runtime_failure_before_apply_retry(server, monkeypatch):
     monkeypatch.setattr(h, 'run', run)
     assert h.execute(req)['state'] == 'active'
 
+@pytest.mark.parametrize('action', ['add', 'remove'])
+def test_interruption_after_journal_before_any_mutation_retries(server, monkeypatch, action):
+    conf, original, peers, calls, req, _ = server
+    if action == 'remove':
+        h.execute(req)
+    req = dict(req, action=action)
+    before_config = conf.read_text()
+    before_runtime = {key: list(nets) for key, nets in peers.items()}
+    calls.clear()
+    atomic = h.atomic
+
+    def interrupt_after_journal(path, text):
+        atomic(path, text)
+        if path.name == 'managed.json' and json.loads(text)[NEW]['state'] == 'pending_' + action:
+            raise RuntimeError('interrupted after durable journal, before mutations')
+
+    monkeypatch.setattr(h, 'atomic', interrupt_after_journal)
+    with pytest.raises(RuntimeError, match='after durable journal'):
+        h.execute(req)
+    assert conf.read_text() == before_config
+    assert peers == before_runtime
+    assert not any(c[1] == 'set' for c in calls)
+    assert json.loads((h.STATE / 'managed.json').read_text())[NEW] == {
+        'owner': req['owner'], 'ip': req['ip'], 'state': 'pending_' + action}
+
+    monkeypatch.setattr(h, 'atomic', atomic)
+    result = h.execute(req)
+    expected_state = 'active' if action == 'add' else 'revoked'
+    assert result['ok'] is True and result['state'] == expected_state
+    assert result['owner'] == req['owner'] and result['ip'] == req['ip']
+    assert json.loads((h.STATE / 'managed.json').read_text())[NEW] == {
+        'owner': req['owner'], 'ip': req['ip'], 'state': expected_state}
+    if action == 'add':
+        assert result['created'] is True
+        assert conf.read_text().count(NEW) == 1 and peers[NEW] == [req['ip'] + '/32']
+    else:
+        assert result['absence_confirmed'] is True
+        assert NEW not in conf.read_text() and NEW not in peers
+    assert OLD in conf.read_text() and peers[OLD] == ['10.30.0.2/32']
+
 def test_owner_and_external_change_protected(server):
     conf, original, peers, calls, req, _ = server
     h.execute(req)

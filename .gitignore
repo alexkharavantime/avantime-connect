@@ -19,6 +19,7 @@ obj/
 *.user
 *.suo
 .vs/
+artifacts/
 
 # ---- прочее ----
 .DS_Store

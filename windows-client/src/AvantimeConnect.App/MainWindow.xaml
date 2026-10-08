@@ -10,7 +10,7 @@
    <Border x:Name="RegistrationPanel" Background="White" CornerRadius="12" Padding="24" BorderBrush="#DCE4EC" BorderThickness="1">
     <StackPanel>
      <TextBlock Text="Адрес сервера" Margin="0,0,0,6"/>
-     <TextBox x:Name="ApiOrigin" AutomationProperties.Name="Адрес сервера"/>
+     <TextBox x:Name="ApiOrigin" Text="https://connect.avantime.lv" AutomationProperties.Name="Адрес сервера"/>
      <TextBlock Text="Адрес выдаёт администратор. Для проверки через SSH можно использовать http://127.0.0.1:15173."
        TextWrapping="Wrap" Foreground="#536575" Margin="0,6,0,16"/>
      <TextBlock Text="Имя компьютера" Margin="0,0,0,6"/>

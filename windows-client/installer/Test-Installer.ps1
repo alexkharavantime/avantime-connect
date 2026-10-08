@@ -1,0 +1,42 @@
+param([Parameter(Mandatory)][string]$Setup)
+$ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+    throw 'Installer smoke test is restricted to a disposable GitHub-hosted runner'
+}
+$app = Join-Path $env:ProgramFiles 'Avantime Connect'
+$wg = Join-Path $env:ProgramFiles 'WireGuard\wireguard.exe'
+if (Test-Path $wg) { throw 'Fresh-install test requires a runner without WireGuard' }
+$profile = Join-Path $env:LOCALAPPDATA 'AvantimeConnect\enrollment.dpapi'
+if (Test-Path $profile) { throw 'Unexpected existing profile on disposable runner' }
+New-Item -ItemType Directory -Path (Split-Path $profile) -Force | Out-Null
+[IO.File]::WriteAllBytes($profile, [byte[]](1..64))
+$profileHash = (Get-FileHash $profile).Hash
+function Run-Setup {
+    $p = Start-Process -FilePath $Setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
+    if ($p.ExitCode -notin @(0, 3010)) { throw "Setup failed: $($p.ExitCode)" }
+}
+Run-Setup
+foreach ($file in @('AvantimeConnect.App.exe', 'coreclr.dll', 'PresentationFramework.dll', 'unins000.exe')) {
+    if (!(Test-Path (Join-Path $app $file))) { throw "Installed file missing: $file" }
+}
+if (!(Test-Path $wg)) { throw 'WireGuard prerequisite was not installed' }
+$shortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Avantime Connect.lnk'
+if (!(Test-Path $shortcut)) { throw 'Desktop shortcut missing' }
+if ((Get-FileHash $profile).Hash -ne $profileHash) { throw 'Existing profile changed' }
+Write-Host 'PASS: fresh install installs app, runtime, WireGuard, shortcut; preserves profile'
+# Suppress global .NET discovery: installed app must use its bundled runtime.
+$env:DOTNET_ROOT = Join-Path $env:RUNNER_TEMP 'no-global-dotnet'
+$env:DOTNET_MULTILEVEL_LOOKUP = '0'
+$probe = Start-Process (Join-Path $app 'AvantimeConnect.App.exe') -ArgumentList '--installer-probe' -Wait -PassThru
+if ($probe.ExitCode -ne 26) { throw 'Installed apphost could not reach its safe argument-validation path' }
+Write-Host 'PASS: installed self-contained app starts without launching the UI or enrolling'
+$wgHash = (Get-FileHash $wg).Hash
+Run-Setup
+if ((Get-FileHash $profile).Hash -ne $profileHash -or (Get-FileHash $wg).Hash -ne $wgHash) { throw 'Repair/update changed profile or existing WireGuard' }
+Write-Host 'PASS: repeat install preserves profile and existing WireGuard'
+$remove = Start-Process (Join-Path $app 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+if ($remove.ExitCode -ne 0 -or (Test-Path (Join-Path $app 'AvantimeConnect.App.exe'))) { throw 'Uninstall failed' }
+if (!(Test-Path $wg) -or (Get-FileHash $profile).Hash -ne $profileHash) { throw 'Uninstall removed prerequisites or profile' }
+if (Test-Path $shortcut) { throw 'Uninstall left desktop shortcut' }
+Write-Host 'PASS: uninstall removes app and shortcut; preserves profile and WireGuard'
+Remove-Item $profile

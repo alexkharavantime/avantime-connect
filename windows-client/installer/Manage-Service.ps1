@@ -23,7 +23,7 @@ try {
     } else { Set-Service $name -StartupType Automatic }
     # Only administrators and SYSTEM control/configure the broker. Users can query
     # its identity/status, then send narrow authenticated commands through the pipe.
-    & "$env:SystemRoot\System32\sc.exe" sdset $name 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWLOCRRC;;;AU)' | Out-Null
+    & "$env:SystemRoot\System32\sc.exe" sdset $name 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCRC;;;AU)' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Service permissions failed' }
     Start-Service $name
     (Get-Service $name).WaitForStatus('Running', [TimeSpan]::FromSeconds(20))

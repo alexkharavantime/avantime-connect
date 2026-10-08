@@ -1,5 +1,7 @@
 using System.Security.Principal;
 using System.Security.Cryptography;
+using System.ServiceProcess;
+using System.IO.Pipes;
 using AvantimeConnect.Core.Broker;
 using AvantimeConnect.Core.Enrollment;
 using AvantimeConnect.Core.WireGuard;
@@ -41,6 +43,21 @@ internal static class BrokerSmoke
             });
         }
         var state = store.Load()!;
+        try
+        {
+            using var broker = new ServiceController(BrokerClient.ServiceName);
+            broker.Stop();
+            throw new Exception("Standard user can stop the broker");
+        }
+        catch (InvalidOperationException e) when (e.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 5 })
+        { Console.WriteLine("PASS: standard user cannot stop broker service"); }
+        try
+        {
+            using var spoof = new NamedPipeServerStream(BrokerClient.PipeName, PipeDirection.InOut);
+            throw new Exception("Standard user can create a broker pipe instance");
+        }
+        catch (UnauthorizedAccessException) { Console.WriteLine("PASS: cannot create broker pipe instance"); }
+        catch (IOException) { Console.WriteLine("PASS: cannot create broker pipe instance"); }
         var name = new TunnelDefinition(state).Name;
         if (phase == "connect")
         {

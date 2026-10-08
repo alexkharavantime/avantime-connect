@@ -79,6 +79,9 @@ sealed class BrokerService : ServiceBase
                 string path;
                 try { path = Path.Combine(Marshal.PtrToStringUni(pointer)!, "AvantimeConnect", "enrollment.dpapi"); }
                 finally { Marshal.FreeCoTaskMem(pointer); }
+                if (path.StartsWith(@"\\", StringComparison.Ordinal)) throw new UnauthorizedAccessException();
+                for (string? part = Path.GetDirectoryName(path); part is not null; part = Path.GetDirectoryName(part))
+                    if ((File.GetAttributes(part) & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException();
                 state = new ProtectedEnrollmentStore(path).Load();
             });
             if (state is null || new TunnelDefinition(state).Name != name) return TunnelResult.InvalidProfile;

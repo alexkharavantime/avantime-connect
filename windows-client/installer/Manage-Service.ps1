@@ -15,6 +15,12 @@ try {
     }
     if ($Action -eq 'prepare') { exit 0 }
     if ($Action -eq 'remove') {
+        # Recheck after the broker has stopped: an in-flight connect may have
+        # completed after the uninstaller's first check. Keep the broker usable.
+        if (Get-Service | Where-Object { $_.Name -like 'WireGuardTunnel$avt-*' -and $_.Status -ne 'Stopped' }) {
+            if ($existing) { Start-Service $name }
+            throw 'An Avantime tunnel is still active'
+        }
         if ($existing) { & "$env:SystemRoot\System32\sc.exe" delete $name | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Delete failed' } }
         exit 0
     }

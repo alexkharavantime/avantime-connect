@@ -8,19 +8,36 @@ New-Item $exchange -ItemType Directory | Out-Null
 & icacls.exe $exchange /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
 dotnet publish (Join-Path $repo 'windows-client\tests\AvantimeConnect.Checks') -c Release -r win-x64 --self-contained true -o $bin
 if ($LASTEXITCODE -ne 0) { throw 'Test client publish failed' }
+Add-Type @'
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CiUserProfile {
+    [DllImport("userenv.dll", CharSet=CharSet.Unicode)]
+    public static extern int CreateProfile(string sid, string name, StringBuilder path, uint size);
+}
+'@
 $users = @()
 try {
     foreach ($suffix in @('A','B')) {
         $user = 'avtCI' + $suffix + ([guid]::NewGuid().ToString('N').Substring(0,6))
         $password = ConvertTo-SecureString ('Aa1!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
-        New-LocalUser -Name $user -Password $password | Out-Null
+        $account = New-LocalUser -Name $user -Password $password
+        $profilePath = [Text.StringBuilder]::new(512)
+        [Runtime.InteropServices.Marshal]::ThrowExceptionForHR([CiUserProfile]::CreateProfile($account.SID.Value, $user, $profilePath, 512))
         Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user
-        $users += [pscustomobject]@{ Name=$user; Credential=[pscredential]::new("$env:COMPUTERNAME\$user",$password) }
+        $users += [pscustomobject]@{ Name=$user; Profile=$profilePath.ToString(); Credential=[pscredential]::new("$env:COMPUTERNAME\$user",$password) }
     }
     function Probe($who, $phase) {
         $stdout = Join-Path $exchange ($phase + '.out')
         $stderr = Join-Path $exchange ($phase + '.err')
-        $p = Start-Process (Join-Path $bin 'AvantimeConnect.Checks.exe') -Credential $who.Credential -LoadUserProfile -WorkingDirectory $bin -ArgumentList @('--broker-smoke', $phase, "`"$exchange`"") -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
+        $userEnvironment = @{
+            USERPROFILE=$who.Profile
+            LOCALAPPDATA=(Join-Path $who.Profile 'AppData\Local')
+            APPDATA=(Join-Path $who.Profile 'AppData\Roaming')
+            USERNAME=$who.Name
+            USERDOMAIN=$env:COMPUTERNAME
+        }
+        $p = Start-Process (Join-Path $bin 'AvantimeConnect.Checks.exe') -Credential $who.Credential -LoadUserProfile -Environment $userEnvironment -WorkingDirectory $bin -ArgumentList @('--broker-smoke', $phase, "`"$exchange`"") -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
         Get-Content $stdout
         if ($p.ExitCode -ne 0) { Get-Content $stderr; throw "Standard-user test failed: $phase ($($p.ExitCode))" }
     }

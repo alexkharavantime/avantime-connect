@@ -1,0 +1,24 @@
+name: Windows client
+on:
+  push:
+    branches: [feature/windows-client]
+    paths: ['windows-client/**', '.github/workflows/windows-client.yml']
+  pull_request:
+    paths: ['windows-client/**', '.github/workflows/windows-client.yml']
+permissions:
+  contents: read
+jobs:
+  build-and-check:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.425'
+      - name: Build WPF client and checks
+        run: dotnet build windows-client/AvantimeConnect.sln -c Release --nologo
+      - name: Check enrollment and Windows protected storage
+        run: dotnet run --project windows-client/tests/AvantimeConnect.Checks -c Release --no-build

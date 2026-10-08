@@ -10,7 +10,11 @@ public sealed class ProtectedEnrollmentStore(string path) : IEnrollmentStore
     public EnrollmentState? Load()
     {
         if (!File.Exists(path)) return null;
-        byte[] plaintext = ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser);
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (input.Length is < 1 or > 65536) throw new InvalidDataException("Invalid enrollment length.");
+        var encrypted = new byte[(int)input.Length];
+        input.ReadExactly(encrypted);
+        byte[] plaintext = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
         try
         {
             var state = JsonSerializer.Deserialize<EnrollmentState>(plaintext);

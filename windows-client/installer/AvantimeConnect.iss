@@ -39,6 +39,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
+Source: "{#PublishDir}\service\Manage-Service.ps1"; Flags: dontcopy
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -52,12 +53,35 @@ Name: "{commondesktop}\Avantime Connect"; Filename: "{app}\AvantimeConnect.App.e
 var
   WireGuardRestart: Boolean;
 
+function ManageService(Script: String; Action: String): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -File "' + Script + '" -Action ' + Action,
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := Result and (Code = 0);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    if not ManageService(ExpandConstant('{app}\service\Manage-Service.ps1'), 'install') then
+      RaiseException('Could not install/start the Avantime Connect service. Run Setup again to repair.');
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   MsiPath: String;
   Code: Integer;
 begin
   Result := '';
+  ExtractTemporaryFile('Manage-Service.ps1');
+  if not ManageService(ExpandConstant('{tmp}\Manage-Service.ps1'), 'prepare') then
+  begin
+    Result := 'Could not stop the existing Avantime Connect service. Installation stopped.';
+    exit;
+  end;
   if FileExists(ExpandConstant('{pf64}\WireGuard\wireguard.exe')) and
      FileExists(ExpandConstant('{pf64}\WireGuard\wg.exe')) then
   begin
@@ -106,6 +130,8 @@ begin
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params,
     '', SW_HIDE, ewWaitUntilTerminated, Code);
   Result := Result and (Code = 0);
+  if Result then
+    Result := ManageService(ExpandConstant('{app}\service\Manage-Service.ps1'), 'remove');
   if not Result then
     MsgBox('Disconnect Avantime VPN in all Windows sessions before uninstalling. Profiles and WireGuard will be preserved.', mbError, MB_OK);
 end;

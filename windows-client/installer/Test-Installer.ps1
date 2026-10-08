@@ -30,6 +30,8 @@ $env:DOTNET_MULTILEVEL_LOOKUP = '0'
 $probe = Start-Process (Join-Path $app 'AvantimeConnect.App.exe') -ArgumentList '--installer-probe' -Wait -PassThru
 if ($probe.ExitCode -ne 26) { throw 'Installed apphost could not reach its safe argument-validation path' }
 Write-Host 'PASS: installed self-contained app starts without launching the UI or enrolling'
+if ((Get-Service AvantimeConnectBroker).Status -ne 'Running') { throw 'Broker is not running' }
+& (Join-Path $PSScriptRoot 'Test-StandardUser.ps1') -Setup $Setup
 $wgHash = (Get-FileHash $wg).Hash
 Run-Setup
 if ((Get-FileHash $profile).Hash -ne $profileHash -or (Get-FileHash $wg).Hash -ne $wgHash) { throw 'Repair/update changed profile or existing WireGuard' }
@@ -37,6 +39,7 @@ Write-Host 'PASS: repeat install preserves profile and existing WireGuard'
 $remove = Start-Process (Join-Path $app 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
 if ($remove.ExitCode -ne 0 -or (Test-Path (Join-Path $app 'AvantimeConnect.App.exe'))) { throw 'Uninstall failed' }
 if (!(Test-Path $wg) -or (Get-FileHash $profile).Hash -ne $profileHash) { throw 'Uninstall removed prerequisites or profile' }
+if (Get-Service AvantimeConnectBroker -ErrorAction SilentlyContinue) { throw 'Broker was not removed' }
 if (Test-Path $shortcut) { throw 'Uninstall left desktop shortcut' }
 Write-Host 'PASS: uninstall removes app and shortcut; preserves profile and WireGuard'
 Remove-Item $profile

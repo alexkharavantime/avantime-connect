@@ -86,7 +86,7 @@ public partial class MainWindow : Window
         if (busy || tunnelName is null || sender is not System.Windows.Controls.Button button || button.Tag is not string action) return;
         busy = true;
         ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = false;
-        VpnStatus.Text = "Подтвердите запрос прав Windows. Ожидаем результат (до 80 секунд)…";
+        VpnStatus.Text = "Служба выполняет операцию VPN. Ожидаем результат (до 80 секунд)…";
         try
         {
             var result = await TunnelElevation.ExecuteAsync(action, tunnelName);
@@ -107,7 +107,7 @@ public partial class MainWindow : Window
         if (busy || !prodAvailable || tunnelName is null || vpnIp is null) return;
         busy = true;
         ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = false;
-        DesktopStatus.Text = "Проверяем VPN перед открытием PROD. Подтвердите запрос Windows, если он появится…";
+        DesktopStatus.Text = "Проверяем VPN перед открытием PROD…";
         try
         {
             var result = await TunnelElevation.ExecuteAsync("check", tunnelName);
@@ -168,7 +168,7 @@ public partial class MainWindow : Window
         if (busy)
         {
             e.Cancel = true;
-            Status.Text = "Дождитесь завершения текущей операции или закройте запрос прав Windows.";
+            Status.Text = "Дождитесь завершения текущей операции.";
         }
         base.OnClosing(e);
     }

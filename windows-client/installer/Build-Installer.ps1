@@ -1,4 +1,4 @@
-param([string]$Version = '0.2.0')
+param([string]$Version = '0.3.0')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -11,6 +11,9 @@ try {
     $publish = Join-Path $stage 'app'
     dotnet publish (Join-Path $repo 'windows-client\src\AvantimeConnect.App') -c Release -r win-x64 --self-contained true "-p:Version=$Version" -o $publish
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
+    dotnet publish (Join-Path $repo 'windows-client\src\AvantimeConnect.Service') -c Release -r win-x64 --self-contained true "-p:Version=$Version" -o (Join-Path $publish 'service')
+    if ($LASTEXITCODE -ne 0) { throw 'Service publish failed' }
+    Copy-Item (Join-Path $PSScriptRoot 'Manage-Service.ps1') (Join-Path $publish 'service')
     # Verify the official prerequisite now; embed its hash into Setup for runtime verification.
     $msi = Join-Path $stage 'wireguard-amd64-1.1.1.msi'
     Invoke-WebRequest 'https://download.wireguard.com/windows-client/wireguard-amd64-1.1.1.msi' -OutFile $msi

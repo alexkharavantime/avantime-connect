@@ -4,6 +4,11 @@ using System.Text.Json;
 using AvantimeConnect.Core.Enrollment;
 using AvantimeConnect.Core.WireGuard;
 
+if (args.Length == 3 && args[0] == "--broker-smoke")
+{
+    await BrokerSmoke.RunAsync(args[1], args[2]);
+    return;
+}
 if (args.Length != 0)
 {
     if (args.Length != 1 || args[0] != "--tunnel-smoke") throw new ArgumentException("Unknown check mode.");

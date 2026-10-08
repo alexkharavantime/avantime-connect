@@ -27,7 +27,7 @@
    <Border x:Name="TunnelPanel" Visibility="Collapsed" Background="White" CornerRadius="12" Padding="20" Margin="0,0,0,16">
     <StackPanel>
      <TextBlock Text="VPN" FontSize="20" FontWeight="SemiBold"/>
-     <TextBlock Text="Подключение к рабочей сети 10.40.0.0/24. Для управления потребуется подтверждение прав Windows."
+     <TextBlock Text="Подключение к рабочей сети 10.40.0.0/24. Управление выполняет служба Avantime Connect."
        TextWrapping="Wrap" Foreground="#536575" Margin="0,8,0,12"/>
      <WrapPanel>
       <Button x:Name="ConnectVpn" Content="Подключить VPN" Tag="connect" Click="Tunnel_Click" Background="#1764A0" Foreground="White" Margin="0,0,8,8"/>

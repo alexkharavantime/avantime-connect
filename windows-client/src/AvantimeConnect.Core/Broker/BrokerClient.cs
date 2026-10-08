@@ -47,6 +47,8 @@ public static class BrokerClient
             await pipe.WriteAsync(request, timeout.Token);
             var response = new byte[1];
             await pipe.ReadExactlyAsync(response, timeout.Token);
+            // Confirm consumption before the server disconnects its reusable pipe.
+            await pipe.WriteAsync(new byte[] { 0 }, timeout.Token);
             return Enum.IsDefined(typeof(TunnelResult), (int)response[0]) ? (TunnelResult)response[0] : TunnelResult.Failed;
         }
     }

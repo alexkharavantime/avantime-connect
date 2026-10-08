@@ -52,6 +52,9 @@ sealed class BrokerService : ServiceBase
                 using var writeTimeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
                 writeTimeout.CancelAfter(TimeSpan.FromSeconds(2));
                 await pipe.WriteAsync(new[] { (byte)result }, writeTimeout.Token);
+                // DisconnectNamedPipe may discard unread response bytes. An ACK
+                // avoids that race without an unbounded WaitForPipeDrain call.
+                await pipe.ReadExactlyAsync(new byte[1], writeTimeout.Token);
             }
             catch when (shutdown.IsCancellationRequested) { break; }
             catch { }

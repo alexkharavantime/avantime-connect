@@ -1,4 +1,7 @@
 using System.IO;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Net.Http;
 using System.Windows;
 using AvantimeConnect.Core.Enrollment;
@@ -16,6 +19,8 @@ public partial class MainWindow : Window
     private FileStream? writerLock;
     private bool busy;
     private string? tunnelName;
+    private string? vpnIp;
+    private bool prodAvailable;
 
     public MainWindow()
     {
@@ -64,7 +69,15 @@ public partial class MainWindow : Window
             Invitation.Clear();
             Status.Text = $"Профиль сохранён для {saved.DeviceName}. VPN IP: {saved.Profile.VpnIp}.";
             tunnelName = new TunnelDefinition(saved).Name;
+            vpnIp = saved.Profile.VpnIp;
+            prodAvailable = saved.Profile.AppType == "desktop" && saved.Profile.RdpHost == "10.40.0.20";
+            OpenProd.IsEnabled = prodAvailable;
+            RegistrationPanel.Visibility = Visibility.Collapsed;
             TunnelPanel.Visibility = Visibility.Visible;
+            DesktopPanel.Visibility = Visibility.Visible;
+            DesktopStatus.Text = prodAvailable
+                ? "PROD: 10.40.0.20. Сначала подключите VPN, затем откройте рабочий стол."
+                : "Открытие PROD доступно для профиля Desktop с сервером 10.40.0.20. Обратитесь к администратору.";
         }
     }
 
@@ -72,7 +85,7 @@ public partial class MainWindow : Window
     {
         if (busy || tunnelName is null || sender is not System.Windows.Controls.Button button || button.Tag is not string action) return;
         busy = true;
-        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = false;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = false;
         VpnStatus.Text = "Подтвердите запрос прав Windows. Ожидаем результат (до 80 секунд)…";
         try
         {
@@ -85,6 +98,44 @@ public partial class MainWindow : Window
         {
             busy = false;
             ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = true;
+            OpenProd.IsEnabled = prodAvailable;
+        }
+    }
+
+    private async void OpenProd_Click(object sender, RoutedEventArgs e)
+    {
+        if (busy || !prodAvailable || tunnelName is null || vpnIp is null) return;
+        busy = true;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = false;
+        DesktopStatus.Text = "Проверяем VPN перед открытием PROD. Подтвердите запрос Windows, если он появится…";
+        try
+        {
+            var result = await TunnelElevation.ExecuteAsync("check", tunnelName);
+            VpnStatus.Text = $"Проверка {DateTime.Now:HH:mm:ss}: " + TunnelElevation.Describe(result);
+            if (result != TunnelResult.RecentHandshake)
+            {
+                DesktopStatus.Text = "Рабочий стол не запущен: сначала подключите VPN и дождитесь handshake.";
+                return;
+            }
+            DesktopStatus.Text = "Проверяем доступ к PROD через VPN…";
+            using (var probe = new TcpClient(new IPEndPoint(IPAddress.Parse(vpnIp), 0)))
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8)))
+                await probe.ConnectAsync(IPAddress.Parse("10.40.0.20"), 3389, timeout.Token);
+            var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "mstsc.exe"))
+            { UseShellExecute = false };
+            start.ArgumentList.Add("/v:10.40.0.20");
+            using var process = Process.Start(start) ?? throw new IOException();
+            DesktopStatus.Text = "Окно подключения к PROD открыто. Введите учётные данные Windows-сервера в окне удалённого рабочего стола.";
+        }
+        catch (ClientException ex) { DesktopStatus.Text = ex.Message; }
+        catch (Exception ex) when (ex is SocketException or OperationCanceledException)
+        { DesktopStatus.Text = "PROD:3389 не отвечает через сохранённый VPN-адрес. Проверьте VPN и повторите."; }
+        catch { DesktopStatus.Text = "Не удалось открыть рабочий стол. Проверьте VPN и наличие клиента удалённого рабочего стола Windows."; }
+        finally
+        {
+            busy = false;
+            ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = true;
+            OpenProd.IsEnabled = prodAvailable;
         }
     }
 

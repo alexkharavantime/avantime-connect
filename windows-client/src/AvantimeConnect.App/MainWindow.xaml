@@ -7,7 +7,7 @@
   <StackPanel Margin="32">
    <TextBlock Text="Avantime Connect" FontSize="30" FontWeight="SemiBold" Foreground="#16334B"/>
    <TextBlock Text="Компьютер и VPN" FontSize="19" Margin="0,8,0,24"/>
-   <Border Background="White" CornerRadius="12" Padding="24" BorderBrush="#DCE4EC" BorderThickness="1">
+   <Border x:Name="RegistrationPanel" Background="White" CornerRadius="12" Padding="24" BorderBrush="#DCE4EC" BorderThickness="1">
     <StackPanel>
      <TextBlock Text="Адрес сервера" Margin="0,0,0,6"/>
      <TextBox x:Name="ApiOrigin" AutomationProperties.Name="Адрес сервера"/>
@@ -39,7 +39,15 @@
        TextWrapping="Wrap" Foreground="#536575"/>
     </StackPanel>
    </Border>
-   <TextBlock Text="Запуск рабочего стола и RemoteApp будет добавлен следующим этапом."
+   <Border x:Name="DesktopPanel" Visibility="Collapsed" Background="White" CornerRadius="12" Padding="20" Margin="0,0,0,16">
+    <StackPanel>
+     <TextBlock Text="Рабочий стол" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
+     <Button x:Name="OpenProd" Content="Открыть PROD" IsEnabled="False" Click="OpenProd_Click"
+       Background="#1764A0" Foreground="White" HorizontalAlignment="Left"/>
+     <TextBlock x:Name="DesktopStatus" TextWrapping="Wrap" Margin="0,12,0,0"/>
+    </StackPanel>
+   </Border>
+   <TextBlock Text="Доступ к DEV и запуск RemoteApp будут добавлены отдельно."
        TextWrapping="Wrap" Foreground="#536575"/>
   </StackPanel>
  </ScrollViewer>

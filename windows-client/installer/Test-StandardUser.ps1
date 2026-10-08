@@ -22,8 +22,8 @@ try {
         $user = 'avtCI' + $suffix + ([guid]::NewGuid().ToString('N').Substring(0,6))
         $password = ConvertTo-SecureString ('Aa1!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
         $account = New-LocalUser -Name $user -Password $password
-        $profilePath = [Text.StringBuilder]::new(512)
-        [Runtime.InteropServices.Marshal]::ThrowExceptionForHR([CiUserProfile]::CreateProfile($account.SID.Value, $user, $profilePath, 512))
+        $profilePath = [Text.StringBuilder]::new(260)
+        [Runtime.InteropServices.Marshal]::ThrowExceptionForHR([CiUserProfile]::CreateProfile($account.SID.Value, $user, $profilePath, 260))
         Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user
         $users += [pscustomobject]@{ Name=$user; Profile=$profilePath.ToString(); Credential=[pscredential]::new("$env:COMPUTERNAME\$user",$password) }
     }

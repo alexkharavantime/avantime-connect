@@ -20,7 +20,9 @@ internal static class BrokerSmoke
             if (!value) throw new Exception("FAIL: " + label);
             Console.WriteLine("PASS: " + label);
         }
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AvantimeConnect", "enrollment.dpapi");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
+        Check(Path.IsPathFullyQualified(local), "Windows loaded and initialized standard user LocalAppData");
+        var path = Path.Combine(local, "AvantimeConnect", "enrollment.dpapi");
         var store = new ProtectedEnrollmentStore(path);
         if (phase == "foreign")
         {

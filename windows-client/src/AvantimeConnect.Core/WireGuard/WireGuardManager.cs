@@ -8,6 +8,11 @@ namespace AvantimeConnect.Core.WireGuard;
 public sealed class WireGuardManager : IKeyGenerator
 {
     public static string WgPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WireGuard", "wg.exe");
+    public static Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken cancellationToken)
+    {
+        ValidateKey(privateKey);
+        return RunAsync("pubkey", privateKey, cancellationToken);
+    }
     public async Task<(string PrivateKey, string PublicKey)> GenerateAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(WgPath)) throw new ClientException("Установите WireGuard для Windows перед регистрацией.");

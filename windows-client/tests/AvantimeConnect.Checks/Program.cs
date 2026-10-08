@@ -4,6 +4,13 @@ using System.Text.Json;
 using AvantimeConnect.Core.Enrollment;
 using AvantimeConnect.Core.WireGuard;
 
+if (args.Length != 0)
+{
+    if (args.Length != 1 || args[0] != "--tunnel-smoke") throw new ArgumentException("Unknown check mode.");
+    await TunnelSmoke.RunAsync();
+    return;
+}
+
 int passed = 0;
 void Check(bool value, string name)
 {
@@ -81,6 +88,34 @@ using (var client = new HttpClient(new FakeTransport(_ => throw new HttpRequestE
     await Reject(() => new EnrollmentService(client, pending, new FakeKeys()).EnrollAsync("https://vpn.example", "invite", "PC"), "network failure handled");
     Check(pending.Load()?.PublicKey is not null, "network failure retains key");
 }
+var tunnelState = new EnrollmentState
+{
+    PrivateKey = result.PrivateKey, PublicKey = result.PublicKey, Profile = Profile()
+};
+tunnelState.Profile.VpnIp = "10.30.0.12";
+var tunnel = new TunnelDefinition(tunnelState);
+Check(tunnel.Configuration.Contains("Address = 10.30.0.12/32\n")
+    && !tunnel.Configuration.Contains("DNS") && !tunnel.Configuration.Contains("PostUp")
+    && tunnel.Configuration.Contains("AllowedIPs = 10.40.0.0/24\n"), "tunnel uses host address and only the approved split route");
+Check(tunnel.Name == new TunnelDefinition(tunnelState).Name && tunnel.Name.Length <= 32, "tunnel identity survives restart");
+foreach (string routes in new[] { "0.0.0.0/1,128.0.0.0/1", "10.20.0.0/24", "10.40.0.0/24,10.20.0.0/24", "::/1,8000::/1" })
+{
+    tunnelState.Profile.AllowedIps = routes;
+    await Reject(() => Task.FromResult(new TunnelDefinition(tunnelState)), "unapproved route set cannot be installed");
+}
+tunnelState.Profile.AllowedIps = "10.40.0.0/24";
+foreach (string ip in new[] { "10.30.0.240", "10.30.0.241", "10.30.0.242", "10.20.0.30", "10.30.0.1" })
+{
+    tunnelState.Profile.VpnIp = ip;
+    await Reject(() => Task.FromResult(new TunnelDefinition(tunnelState)), "reserved or foreign interface address rejected");
+}
+tunnelState.Profile.VpnIp = "10.30.0.12";
+var now = DateTimeOffset.FromUnixTimeSeconds(2000);
+Check(TunnelDefinition.HasRecentHandshake(tunnel.ServerPublicKey + "\t1999", tunnel.ServerPublicKey, now), "fresh expected peer handshake accepted");
+foreach (string output in new[] { tunnel.ServerPublicKey + "\t0", tunnel.ServerPublicKey + "\t1819",
+    tunnel.ServerPublicKey + "\t2001", "other-peer\t1999", tunnel.ServerPublicKey + "\t1999\nother\t1999", "malformed" })
+    Check(!TunnelDefinition.HasRecentHandshake(output, tunnel.ServerPublicKey, now), "missing/stale/future/foreign handshake never reports connected");
+
 if (OperatingSystem.IsWindows())
 {
     var path = Path.Combine(Path.GetTempPath(), "avantime-check-" + Guid.NewGuid().ToString("N"), "state.dpapi");
@@ -95,6 +130,42 @@ if (OperatingSystem.IsWindows())
         catch (System.Security.Cryptography.CryptographicException) { Check(true, "damaged DPAPI state fails closed"); }
     }
     finally { Directory.Delete(Path.GetDirectoryName(path)!, true); }
+    var plain = Encoding.UTF8.GetBytes(tunnel.Configuration);
+    var encrypted = TunnelDpapi.Protect(plain, tunnel.Name);
+    Check(!Encoding.UTF8.GetString(encrypted).Contains(tunnelState.PrivateKey), "service configuration encrypted before disk write");
+    Check(TunnelDpapi.Unprotect(encrypted, tunnel.Name).SequenceEqual(plain), "WireGuard DPAPI description format round trip");
+    try { TunnelDpapi.Unprotect(encrypted, "wrong-name"); throw new Exception("name mismatch accepted"); }
+    catch (System.Security.Cryptography.CryptographicException) { Check(true, "DPAPI service configuration bound to tunnel name"); }
+    var exe = @"C:\Program Files\WireGuard\wireguard.exe";
+    var conf = @"C:\Program Files\AvantimeConnect.Tunnels\avt-test.conf.dpapi";
+    var command = $"\"{exe}\" /tunnelservice \"{conf}\"";
+    Check(WindowsTunnelController.IsExpectedCommand(command, exe, conf), "expected service executable and configuration accepted");
+    foreach (var bad in new[] { command + " extra", command.Replace("/tunnelservice", "/managerservice"),
+        command.Replace("wireguard.exe", "other.exe"), command.Replace("avt-test", "foreign"), "cmd.exe /c " + command })
+        Check(!WindowsTunnelController.IsExpectedCommand(bad, exe, conf), "foreign service command rejected");
+    using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+    if (new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+    {
+        var aclPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "AvantimeConnect.Checks-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            ProtectedTunnelFiles.EnsureDirectory(aclPath);
+            var configPath = Path.Combine(aclPath, tunnel.Name + ".conf.dpapi");
+            ProtectedTunnelFiles.Create(configPath, tunnel);
+            ProtectedTunnelFiles.Verify(configPath, tunnel);
+            Check(true, "protected configuration ACL and identity verified");
+            var file = new FileInfo(configPath);
+            var acl = System.IO.FileSystemAclExtensions.GetAccessControl(file);
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null),
+                System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+            System.IO.FileSystemAclExtensions.SetAccessControl(file, acl);
+            try { ProtectedTunnelFiles.Verify(configPath, tunnel); throw new Exception("weak ACL accepted"); }
+            catch (InvalidDataException) { Check(true, "readable-by-everyone configuration fails closed"); }
+        }
+        finally { if (Directory.Exists(aclPath)) Directory.Delete(aclPath, true); }
+    }
+    else Console.WriteLine("SKIP: restricted service-file ACL check requires administrator");
     if (File.Exists(WireGuardManager.WgPath))
     {
         var pair = await new WireGuardManager().GenerateAsync(CancellationToken.None);

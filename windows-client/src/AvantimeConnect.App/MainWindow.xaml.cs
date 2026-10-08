@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly string directory;
     private FileStream? writerLock;
     private bool busy;
+    private string? tunnelName;
 
     public MainWindow()
     {
@@ -61,7 +62,29 @@ public partial class MainWindow : Window
             WireGuardManager.ValidateProfile(saved.Profile);
             Register.IsEnabled = false;
             Invitation.Clear();
-            Status.Text = $"Профиль сохранён для {saved.DeviceName}. VPN IP: {saved.Profile.VpnIp}. Туннель ещё не подключён. Текущий статус устройства на сервере этим не проверяется.";
+            Status.Text = $"Профиль сохранён для {saved.DeviceName}. VPN IP: {saved.Profile.VpnIp}.";
+            tunnelName = new TunnelDefinition(saved).Name;
+            TunnelPanel.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void Tunnel_Click(object sender, RoutedEventArgs e)
+    {
+        if (busy || tunnelName is null || sender is not System.Windows.Controls.Button button || button.Tag is not string action) return;
+        busy = true;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = false;
+        VpnStatus.Text = "Подтвердите запрос прав Windows. Ожидаем результат (до 80 секунд)…";
+        try
+        {
+            var result = await TunnelElevation.ExecuteAsync(action, tunnelName);
+            VpnStatus.Text = $"Проверка {DateTime.Now:HH:mm:ss}: " + TunnelElevation.Describe(result);
+        }
+        catch (ClientException ex) { VpnStatus.Text = ex.Message; }
+        catch { VpnStatus.Text = TunnelElevation.Describe(TunnelResult.Failed); }
+        finally
+        {
+            busy = false;
+            ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = true;
         }
     }
 
@@ -94,7 +117,7 @@ public partial class MainWindow : Window
         if (busy)
         {
             e.Cancel = true;
-            Status.Text = "Дождитесь завершения запроса (до 90 секунд). Повтор использует те же ключи.";
+            Status.Text = "Дождитесь завершения текущей операции или закройте запрос прав Windows.";
         }
         base.OnClosing(e);
     }

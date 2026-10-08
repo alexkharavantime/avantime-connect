@@ -22,3 +22,17 @@ jobs:
         run: dotnet build windows-client/AvantimeConnect.sln -c Release --nologo
       - name: Check enrollment and Windows protected storage
         run: dotnet run --project windows-client/tests/AvantimeConnect.Checks -c Release --no-build
+      - name: Install official WireGuard on disposable runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Join-Path $env:RUNNER_TEMP 'wireguard-amd64-1.1.1.msi'
+          Invoke-WebRequest 'https://download.wireguard.com/windows-client/wireguard-amd64-1.1.1.msi' -OutFile $msi
+          $signature = Get-AuthenticodeSignature $msi
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'WireGuard LLC') {
+            throw 'WireGuard installer signature is not valid for the expected publisher'
+          }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', 'DO_NOT_LAUNCH=1') -Wait -PassThru
+          if ($install.ExitCode -notin @(0, 3010)) { throw "WireGuard installation failed: $($install.ExitCode)" }
+      - name: Check encrypted LocalSystem tunnel on disposable runner
+        run: dotnet run --project windows-client/tests/AvantimeConnect.Checks -c Release --no-build -- --tunnel-smoke

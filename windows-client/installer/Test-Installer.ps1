@@ -11,8 +11,23 @@ if (Test-Path $profile) { throw 'Unexpected existing profile on disposable runne
 New-Item -ItemType Directory -Path (Split-Path $profile) -Force | Out-Null
 [IO.File]::WriteAllBytes($profile, [byte[]](1..64))
 $profileHash = (Get-FileHash $profile).Hash
+# Reproduce Windows client default policy, regardless of the CI runner defaults.
+# Each installer child inherits Restricted; only its own helper may narrow the
+# override to RemoteSigned. No machine/user policy is changed by the installer.
+function Invoke-RestrictedInstaller([string]$File, [string[]]$Arguments) {
+    $savedPolicy = $env:PSExecutionPolicyPreference
+    try {
+        $env:PSExecutionPolicyPreference = 'Restricted'
+        $effective = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy'
+        if ($effective.Trim() -ne 'Restricted') { throw 'Restricted-policy precondition failed' }
+        $process = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru
+        $after = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy'
+        if ($after.Trim() -ne 'Restricted') { throw 'Installer changed inherited execution policy' }
+        return $process
+    } finally { $env:PSExecutionPolicyPreference = $savedPolicy }
+}
 function Run-Setup {
-    $p = Start-Process -FilePath $Setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
+    $p = Invoke-RestrictedInstaller $Setup @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-')
     if ($p.ExitCode -notin @(0, 3010)) { throw "Setup failed: $($p.ExitCode)" }
 }
 Run-Setup
@@ -36,7 +51,7 @@ $wgHash = (Get-FileHash $wg).Hash
 Run-Setup
 if ((Get-FileHash $profile).Hash -ne $profileHash -or (Get-FileHash $wg).Hash -ne $wgHash) { throw 'Repair/update changed profile or existing WireGuard' }
 Write-Host 'PASS: repeat install preserves profile and existing WireGuard'
-$remove = Start-Process (Join-Path $app 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+$remove = Invoke-RestrictedInstaller (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
 if ($remove.ExitCode -ne 0 -or (Test-Path (Join-Path $app 'AvantimeConnect.App.exe'))) { throw 'Uninstall failed' }
 if (!(Test-Path $wg) -or (Get-FileHash $profile).Hash -ne $profileHash) { throw 'Uninstall removed prerequisites or profile' }
 if (Get-Service AvantimeConnectBroker -ErrorAction SilentlyContinue) { throw 'Broker was not removed' }

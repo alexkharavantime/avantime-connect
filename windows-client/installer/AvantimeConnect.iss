@@ -58,8 +58,9 @@ var
   Code: Integer;
 begin
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -File "' + Script + '" -Action ' + Action,
+    '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "' + Script + '" -Action ' + Action,
     '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Log('Service setup action ' + Action + ': started=' + IntToStr(Ord(Result)) + ', exit=' + IntToStr(Code));
   Result := Result and (Code = 0);
 end;
 
@@ -79,7 +80,7 @@ begin
   ExtractTemporaryFile('Manage-Service.ps1');
   if not ManageService(ExpandConstant('{tmp}\Manage-Service.ps1'), 'prepare') then
   begin
-    Result := 'Could not stop the existing Avantime Connect service. Installation stopped.';
+    Result := 'Could not prepare the Avantime Connect service. Check PowerShell policy and service permissions. Installation stopped.';
     exit;
   end;
   if FileExists(ExpandConstant('{pf64}\WireGuard\wireguard.exe')) and

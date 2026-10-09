@@ -51,10 +51,41 @@ $wgHash = (Get-FileHash $wg).Hash
 Run-Setup
 if ((Get-FileHash $profile).Hash -ne $profileHash -or (Get-FileHash $wg).Hash -ne $wgHash) { throw 'Repair/update changed profile or existing WireGuard' }
 Write-Host 'PASS: repeat install preserves profile and existing WireGuard'
-$remove = Invoke-RestrictedInstaller (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
-if ($remove.ExitCode -ne 0 -or (Test-Path (Join-Path $app 'AvantimeConnect.App.exe'))) { throw 'Uninstall failed' }
-if (!(Test-Path $wg) -or (Get-FileHash $profile).Hash -ne $profileHash) { throw 'Uninstall removed prerequisites or profile' }
-if (Get-Service AvantimeConnectBroker -ErrorAction SilentlyContinue) { throw 'Broker was not removed' }
-if (Test-Path $shortcut) { throw 'Uninstall left desktop shortcut' }
-Write-Host 'PASS: uninstall removes app and shortcut; preserves profile and WireGuard'
+# Seed DNS after stopping the periodic broker reconciliation, so the test proves
+# cleanup comes from the installed uninstaller/binary (not a background timer).
+Stop-Service AvantimeConnectBroker -ErrorAction Stop
+(Get-Service AvantimeConnectBroker).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+$dnsScript = Join-Path $PSScriptRoot '..\src\AvantimeConnect.Core\WireGuard\SplitDns.ps1'
+$manualDns = $null
+$foreignDns = $null
+$ownedDnsIds = @()
+try {
+    if (@(Get-DnsClientNrptRule | Where-Object {
+        @($_.Namespace | Where-Object { $_ -in @('ad.avantime.lv', '.ad.avantime.lv', '.installer-smoke.invalid') }).Count
+    }).Count) { throw 'DNS uninstall smoke requires clean dedicated namespaces' }
+    $manualDns = Add-DnsClientNrptRule -Namespace '.ad.avantime.lv' -NameServers '10.40.0.10' -PassThru
+    $foreignDns = Add-DnsClientNrptRule -Namespace '.installer-smoke.invalid' -NameServers '192.0.2.53' -PassThru
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $dnsScript -Action enable
+    if ($LASTEXITCODE -ne 0) { throw 'DNS uninstall smoke preparation failed' }
+    $ownedDnsIds = @(Get-DnsClientNrptRule | Where-Object DisplayName -eq 'Avantime Connect split DNS v1' | Select-Object -ExpandProperty Name)
+    if ($ownedDnsIds.Count -ne 1) { throw 'Expected one owned apex rule and reused manual suffix' }
+    $remove = Invoke-RestrictedInstaller (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+    if ($remove.ExitCode -ne 0 -or (Test-Path (Join-Path $app 'AvantimeConnect.App.exe'))) { throw 'Uninstall failed' }
+    if (!(Test-Path $wg) -or (Get-FileHash $profile).Hash -ne $profileHash) { throw 'Uninstall removed prerequisites or profile' }
+    if (Get-Service AvantimeConnectBroker -ErrorAction SilentlyContinue) { throw 'Broker was not removed' }
+    if (Test-Path $shortcut) { throw 'Uninstall left desktop shortcut' }
+    $remaining = @(Get-DnsClientNrptRule)
+    if (@($remaining | Where-Object { $ownedDnsIds -contains $_.Name }).Count) { throw 'Uninstall left owned DNS' }
+    foreach ($preserved in @($manualDns, $foreignDns)) {
+        $found = @($remaining | Where-Object Name -eq $preserved.Name)
+        if ($found.Count -ne 1 -or [string]$found[0].NameServers -ne [string]$preserved.NameServers -or
+            [string]$found[0].Namespace -ne [string]$preserved.Namespace) { throw 'Uninstall changed foreign/manual DNS' }
+    }
+    Write-Host 'PASS: uninstall removes owned DNS and app; preserves manual/foreign DNS, profile and WireGuard'
+} finally {
+    # Only test-created IDs; never delete pre-existing NRPT entries.
+    foreach ($ruleId in @($ownedDnsIds) + @($manualDns.Name, $foreignDns.Name)) {
+        if ($ruleId) { Remove-DnsClientNrptRule -Name $ruleId -Force -ErrorAction SilentlyContinue }
+    }
+}
 Remove-Item $profile

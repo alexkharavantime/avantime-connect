@@ -84,8 +84,11 @@ try {
     Write-Host 'PASS: uninstall removes owned DNS and app; preserves manual/foreign DNS, profile and WireGuard'
 } finally {
     # Only test-created IDs; never delete pre-existing NRPT entries.
-    foreach ($ruleId in @($ownedDnsIds) + @($manualDns.Name, $foreignDns.Name)) {
-        if ($ruleId) { Remove-DnsClientNrptRule -Name $ruleId -Force -ErrorAction SilentlyContinue }
+    $testIds = @($ownedDnsIds) + @($manualDns.Name, $foreignDns.Name)
+    foreach ($remainingRule in @(Get-DnsClientNrptRule)) {
+        if ($testIds -contains $remainingRule.Name) {
+            Remove-DnsClientNrptRule -Name $remainingRule.Name -Force
+        }
     }
 }
 Remove-Item $profile

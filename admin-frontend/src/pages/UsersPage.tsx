@@ -8,6 +8,8 @@ export default function UsersPage() {
   const [login, setLogin] = useState("");
   const [fullName, setFullName] = useState("");
   const [appType, setAppType] = useState<AppType>("desktop");
+  const [environments, setEnvironments] = useState("prod");
+  const [accessBusy, setAccessBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok?: string; err?: string }>({});
   const [invite, setInvite] = useState<{ login: string; token: string } | null>(null);
 
@@ -23,13 +25,23 @@ export default function UsersPage() {
   async function createUser() {
     setMsg({});
     try {
-      await api.createUser({ login, full_name: fullName, app_type: appType });
+      await api.createUser({ login, full_name: fullName, app_type: appType, environments: environments.split(",") });
       setLogin(""); setFullName(""); setMsg({ ok: "Пользователь создан" }); load();
     } catch (e: any) { setMsg({ err: e.message }); }
   }
   async function makeInvite(l: string) {
     try { const r = await api.createInvite(l); setInvite({ login: l, token: r.token }); }
     catch (e: any) { setMsg({ err: e.message }); }
+  }
+
+  async function changeAccess(u: User, value?: string) {
+    setAccessBusy(true); setMsg({});
+    try {
+      if (value) await api.setAccess(u.login, value.split(','), u.access_revision ?? 0);
+      else await api.retryAccess(u.login);
+      setMsg({ok: `Доступ ${u.login} применён. На компьютере нажмите «Обновить доступ».`});
+    } catch (e) { setMsg({err: e instanceof Error ? e.message : String(e)}); }
+    finally { await load(); setAccessBusy(false); }
   }
 
   return (
@@ -45,6 +57,10 @@ export default function UsersPage() {
           <option value="desktop">Рабочий стол (Desktop)</option>
           <option value="remoteapp64">1С:Предприятие 8 (64-бит)</option>
           <option value="remoteapp32">1С:Предприятие 8 (32-бит)</option>
+        </select>
+        <label>Доступ к серверам</label>
+        <select value={environments} onChange={e => setEnvironments(e.target.value)}>
+          <option value="prod">Только PROD</option><option value="dev">Только DEV</option><option value="dev,prod">DEV и PROD</option>
         </select>
         <button className="primary" onClick={createUser}>Создать</button>
         {msg.ok && <div className="ok">{msg.ok}</div>}
@@ -69,11 +85,14 @@ export default function UsersPage() {
         {!loading && !loadError && users.length === 0 && <p>Пользователей пока нет</p>}
         {!loading && !loadError && users.length > 0 && (
         <table>
-          <thead><tr><th>Логин</th><th>Имя</th><th>Тип</th><th></th></tr></thead>
+          <thead><tr><th>Логин</th><th>Имя</th><th>Тип</th><th>Назначенный доступ</th><th></th></tr></thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.login}>
                 <td>{u.login}</td><td>{u.full_name}</td><td>{u.app_type}</td>
+                <td><select aria-label={`Доступ ${u.login}`} disabled={accessBusy} value={(u.environments ?? ['prod']).join(',')} onChange={e => changeAccess(u, e.target.value)}>
+                  <option value="prod">Только PROD</option><option value="dev">Только DEV</option><option value="dev,prod">DEV и PROD</option>
+                </select><button disabled={accessBusy} onClick={() => changeAccess(u)}>Повторить применение</button></td>
                 <td><button className="primary" onClick={() => makeInvite(u.login)}>Приглашение</button></td>
               </tr>
             ))}

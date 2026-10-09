@@ -19,6 +19,8 @@ public sealed class EnrollmentState
 
 public sealed class EnrollmentProfile
 {
+    [JsonPropertyName("environments")] public string[]? Environments { get; set; }
+    [JsonPropertyName("access_revision")] public int AccessRevision { get; set; }
     [JsonPropertyName("vpn_ip")] public string VpnIp { get; set; } = "";
     [JsonPropertyName("server_public_key")] public string ServerPublicKey { get; set; } = "";
     [JsonPropertyName("endpoint")] public string Endpoint { get; set; } = "";
@@ -61,6 +63,48 @@ public sealed class EnrollmentService(HttpClient http, IEnrollmentStore store, I
                  (uri.Host == "127.0.0.1" || uri.Host == "[::1]"))))
             throw new ClientException("Укажите HTTPS-адрес сервера без пути. HTTP допустим только для локального SSH-туннеля 127.0.0.1.");
         return uri.GetLeftPart(UriPartial.Authority);
+    }
+
+    public async Task RefreshAccessAsync(CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = store.Load();
+            if (state?.Profile is null) throw new ClientException("Сначала зарегистрируйте компьютер.");
+            var origin = ValidateOrigin(state.ApiOrigin);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(20));
+            using var request = new HttpRequestMessage(HttpMethod.Post, origin + "/api/enroll/profile")
+            { Content = JsonContent.Create(new {token = state.Token, public_key = state.PublicKey, device_name = state.DeviceName}) };
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+                throw new ClientException(response.StatusCode == System.Net.HttpStatusCode.Gone
+                    ? "Устройство отозвано. Обратитесь к администратору."
+                    : "Обновление доступа не подтверждено. Проверьте применение прав в админке и версию сервера. Прежний профиль сохранён.");
+            using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            var buffer = new byte[16385];
+            var count = 0;
+            while (count < buffer.Length)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(count), timeout.Token);
+                if (read == 0) break;
+                count += read;
+            }
+            if (count > 16384) throw new ClientException("Ответ сервера слишком велик.");
+            var updated = JsonSerializer.Deserialize<EnrollmentProfile>(buffer.AsSpan(0, count));
+            var old = state.Profile;
+            if (updated is null || updated.VpnIp != old.VpnIp || updated.ServerPublicKey != old.ServerPublicKey
+                || updated.Endpoint != old.Endpoint || updated.Keepalive != old.Keepalive
+                || updated.AppType != old.AppType || updated.AccessRevision < old.AccessRevision)
+                throw new ClientException("Параметры устройства изменились. Обновление остановлено; обратитесь к администратору.");
+            state.Profile = updated;
+            _ = new TunnelDefinition(state); // Strict destination allowlist before saving.
+            store.Save(state);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
+        { throw new ClientException("Не удалось обновить доступ. Прежний профиль сохранён; повторите позже."); }
+        finally { gate.Release(); }
     }
 
     public async Task<EnrollmentState> EnrollAsync(string origin, string token, string deviceName,

@@ -6,7 +6,7 @@ from pymongo.errors import DuplicateKeyError
 from app.db.mongo import db
 from app.models import EnrollRequest, EnrollResponse, EnrollSnapshot
 from app.services.ipam import next_free_ip
-from app.services import wireguard
+from app.services import wireguard, access
 from app.services.device_lifecycle import finish_revocation
 from app.config import settings
 
@@ -86,7 +86,8 @@ async def enroll(req: EnrollRequest):
                     raise HTTPException(503, 'Пул адресов исчерпан')
                 dev = {'_id': owner, 'login': user['login'], 'device_name': req.device_name,
                        'public_key': req.public_key, 'vpn_ip': ip, 'kind': 'client',
-                       'revoked': False, 'state': 'pending', 'wg_owner': owner, 'created_at': now}
+                       'revoked': False, 'state': 'pending', 'wg_owner': owner, 'created_at': now,
+                       'initial_environments': access.policy(user)[0], 'initial_access_revision': access.policy(user)[1]}
                 try:
                     await db.devices.insert_one(dev)
                     break
@@ -97,7 +98,12 @@ async def enroll(req: EnrollRequest):
                 raise HTTPException(503, 'Не удалось выделить адрес')
         if dev['state'] == 'pending':
             try:
-                await wireguard.add_peer(req.public_key, dev['vpn_ip'], owner)
+                if settings.access_control_enabled:
+                    await wireguard.add_peer(req.public_key, dev['vpn_ip'], owner,
+                        dev.get('initial_environments', ['prod']),
+                        dev.get('initial_access_revision', 0), access.group(dev['login']))
+                else:
+                    await wireguard.add_peer(req.public_key, dev['vpn_ip'], owner)
             except wireguard.WireGuardError:
                 # A lost SSH response does NOT mean that the peer was not installed.
                 # Keep token binding/IP/owner so retry converges on the same operation.
@@ -105,9 +111,11 @@ async def enroll(req: EnrollRequest):
             snapshot = EnrollSnapshot(
                 enrolled_token=req.token, public_key=req.public_key, device_name=req.device_name,
                 vpn_ip=dev['vpn_ip'], server_public_key=settings.wg_server_public_key,
-                endpoint=settings.wg_endpoint, allowed_ips=settings.wg_allowed_ips,
+                endpoint=settings.wg_endpoint, allowed_ips=(access.profile_fields(dev.get('initial_environments', ['prod']), dev.get('initial_access_revision', 0))['allowed_ips'] if settings.access_control_enabled else settings.wg_allowed_ips),
                 keepalive=settings.wg_keepalive, app_type=user['app_type'],
-                rdp_host=settings.rdp_host, completed_at=datetime.now(timezone.utc))
+                rdp_host=(access.profile_fields(dev.get('initial_environments', ['prod']), dev.get('initial_access_revision', 0))['rdp_host'] if settings.access_control_enabled else settings.rdp_host),
+                environments=dev.get('initial_environments', ['prod']) if settings.access_control_enabled else None,
+                access_revision=dev.get('initial_access_revision', 0), completed_at=datetime.now(timezone.utc))
             activated = await db.devices.find_one_and_update(
                 {'_id': owner, 'state': 'pending'},
                 {'$set': {'state': 'active', **snapshot.model_dump()}},
@@ -124,9 +132,37 @@ async def enroll(req: EnrollRequest):
                     raise HTTPException(410, 'Регистрация отменена; устройство отозвано')
         elif dev['state'] != 'active':
             raise HTTPException(409, 'Состояние устройства не допускает регистрацию')
+        if settings.access_control_enabled:
+            current = await db.devices.find_one({'_id': owner, 'state': 'active'})
+            if not current:
+                raise HTTPException(410, 'Устройство отозвано')
+            try:
+                await access.reconcile(current)
+            except wireguard.WireGuardError:
+                raise HTTPException(503, 'Применение доступа не подтверждено; повторите регистрацию')
         await db.invites.update_one({'token': req.token, 'lease': lease}, {'$set': {'used': True}})
         # Re-read the state so a revoke that already won cannot return success.
         return await recover_enrollment(req)
     finally:
         await db.invites.update_one({'token': req.token, 'lease': lease},
             {'$unset': {'lease': '', 'lease_until': ''}})
+
+@router.post('/profile', response_model=EnrollResponse)
+async def current_profile(req: EnrollRequest):
+    # The consumed high-entropy invitation is only a credential to READ this
+    # exact device profile. It can never enroll a second device or change access.
+    dev = await db.devices.find_one({'enrolled_token': req.token,
+        'public_key': req.public_key, 'device_name': req.device_name, 'kind': 'client'})
+    if not dev:
+        raise HTTPException(403, 'Профиль недоступен')
+    if dev.get('state') != 'active':
+        raise HTTPException(410, 'Устройство не активно')
+    if not settings.access_control_enabled:
+        return EnrollResponse.model_validate(dev)
+    user = await db.users.find_one({'login': dev['login']})
+    if not user:
+        raise HTTPException(403, 'Профиль недоступен')
+    environments, revision = access.policy(user)
+    if (dev.get('applied_access_revision') != revision or dev.get('applied_environments') != environments):
+        raise HTTPException(503, 'Администратору нужно подтвердить применение доступа')
+    return EnrollResponse.model_validate({**dev, **access.profile_fields(environments, revision)})

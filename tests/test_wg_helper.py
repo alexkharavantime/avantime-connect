@@ -279,3 +279,95 @@ def test_tombstone_write_failure_cannot_confirm_removal(server, monkeypatch):
     monkeypatch.setattr(h, 'atomic', lose)
     with pytest.raises(h.Refused, match='Removal not confirmed'):
         h.execute(dict(req, action='remove'))
+
+@pytest.fixture
+def acl_server(server, monkeypatch):
+    h.STATE.mkdir(exist_ok=True)
+    (h.STATE / 'access-enabled').touch()
+    rules = []
+    monkeypatch.setattr(h, 'enforce_access', lambda managed: rules.append(h.firewall_text(managed)))
+    return server, rules
+
+def test_access_policy_migration_and_revocation(acl_server):
+    server, rules = acl_server
+    conf, original, peers, calls, req, _ = server
+    h.execute(req)
+    before = conf.read_text()
+    assigned = dict(req, action='access', environments=['dev', 'prod'], revision=1, group='a' * 64)
+    assert h.execute(assigned)['enforced'] is True
+    assert 'ip daddr 10.20.0.20/32 counter accept' in rules[-1]
+    assert 'ip daddr 10.40.0.0/24 counter accept' in rules[-1]
+    assert '10.30.0.2' not in rules[-1]  # unmanaged peer is untouched
+    assert 'masquerade' not in rules[-1] and 'flush ruleset' not in rules[-1]
+    assert conf.read_text() == before
+    assert h.execute(dict(assigned, environments=['dev'], revision=2))['enforced']
+    assert '10.40.0.0/24' not in rules[-1]
+    with pytest.raises(h.Refused, match='revision'):
+        h.execute(assigned)
+    h.execute(dict(req, action='remove'))
+    assert 'counter accept' not in rules[-1] and 'counter drop' in rules[-1]
+    assert peers == {OLD: ['10.30.0.2/32']}
+
+def test_late_enrollment_cannot_restore_older_user_grant(acl_server):
+    server, rules = acl_server
+    req = server[4]
+    h.execute({'action': 'user_access', 'group': 'b' * 64, 'environments': ['dev'], 'revision': 2})
+    h.execute(dict(req, environments=['dev', 'prod'], revision=1, group='b' * 64))
+    assert '10.20.0.20/32' in rules[-1] and '10.40.0.0/24' not in rules[-1]
+    record = json.loads((h.STATE / 'managed.json').read_text())[NEW]
+    assert record['access_revision'] == 2
+    with pytest.raises(h.Refused, match='revision'):
+        h.execute({'action': 'user_access', 'group': 'b' * 64, 'environments': ['prod'], 'revision': 1})
+
+def test_group_update_covers_bound_peers_without_config_mutation(acl_server):
+    server, rules = acl_server
+    req = server[4]
+    h.execute(dict(req, environments=['dev', 'prod'], revision=1, group='c' * 64))
+    before = server[0].read_text()
+    h.execute({'action': 'user_access', 'group': 'c' * 64, 'environments': ['prod'], 'revision': 2})
+    assert '10.20.0.20' not in rules[-1] and '10.40.0.0/24' in rules[-1]
+    assert server[0].read_text() == before
+    (h.STATE / 'access-users.json').unlink()
+    with pytest.raises(h.Refused, match='Missing'):
+        h.restore_access()
+
+def test_access_disabled_refuses_before_peer_install(server):
+    req = server[4]
+    with pytest.raises(h.Refused, match='not enabled'):
+        h.execute(dict(req, environments=['dev'], revision=1, group='a' * 64))
+    assert NEW not in server[2] and server[0].read_text() == server[1]
+
+def test_firewall_failure_never_installs_peer(acl_server, monkeypatch):
+    server, rules = acl_server
+    def fail(managed):
+        raise TimeoutError('nft failed')
+    monkeypatch.setattr(h, 'enforce_access', fail)
+    req = dict(server[4], environments=['dev'], revision=1, group='d' * 64)
+    with pytest.raises(TimeoutError):
+        h.execute(req)
+    assert NEW not in server[2] and server[0].read_text() == server[1]
+    monkeypatch.setattr(h, 'enforce_access', lambda managed: rules.append(h.firewall_text(managed)))
+    assert h.execute(req)['state'] == 'active'
+
+@pytest.mark.parametrize('change', [
+    {'environments': []}, {'environments': ['dev', 'dev']}, {'environments': ['prod', 'dev']},
+    {'environments': ['dev; flush ruleset']}, {'revision': -1}, {'revision': True},
+    {'revision': 2147483648}, {'group': 'x; flush ruleset'},
+])
+def test_access_request_validation(server, change):
+    req = dict(server[4], environments=['dev'], revision=1, group='a' * 64)
+    req.update(change)
+    with pytest.raises(h.Refused):
+        h.execute(req)
+    assert server[0].read_text() == server[1]
+
+@pytest.mark.parametrize('error', [h.Refused('bad journal'), RuntimeError('nft unavailable')])
+def test_boot_restore_failure_has_nonzero_exit(monkeypatch, error):
+    monkeypatch.setattr(h.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(h.sys, 'argv', ['helper', '--restore-access'])
+    def fail():
+        raise error
+    monkeypatch.setattr(h, 'restore_access', fail)
+    with pytest.raises(SystemExit) as caught:
+        h.main()
+    assert caught.value.code == 1

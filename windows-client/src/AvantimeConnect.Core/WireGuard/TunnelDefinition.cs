@@ -13,6 +13,19 @@ public sealed class TunnelDefinition
     public string PublicKey { get; }
     public string ServerPublicKey { get; }
     public string Configuration { get; }
+    public string AllowedIps { get; }
+    public static readonly string[] SupportedRoutes = ["10.40.0.0/24", "10.20.0.20/32", "10.20.0.20/32, 10.40.0.0/24"];
+    public static string[] Environments(EnrollmentProfile profile)
+    {
+        var envs = profile.Environments ?? ["prod"];
+        if (envs.Length is < 1 or > 2 || envs.Distinct().Count() != envs.Length
+            || envs.Any(e => e is not ("prod" or "dev"))) throw new ClientException("Некорректный список разрешённых серверов.");
+        var expected = string.Join(", ", envs.OrderBy(e => e).Select(e => e == "dev" ? "10.20.0.20/32" : "10.40.0.0/24"));
+        if (profile.AllowedIps.Trim() != expected || profile.AccessRevision < 0
+            || profile.RdpHost != (envs.Contains("prod") ? "10.40.0.20" : "10.20.0.20"))
+            throw new ClientException("Маршруты не соответствуют разрешённым серверам.");
+        return envs;
+    }
 
     public TunnelDefinition(EnrollmentState state)
     {
@@ -21,20 +34,20 @@ public sealed class TunnelDefinition
         WireGuardManager.ValidateKey(state.PublicKey);
         var profile = state.Profile;
         WireGuardManager.ValidateProfile(profile);
-        // Pilot deployment policy, intentionally narrower than the enrollment contract.
-        // In particular, reject paired /1 routes, DNS changes and the management LAN.
+        _ = Environments(profile);
+        AllowedIps = profile.AllowedIps.Trim();
         var octets = profile.VpnIp.Split('.');
         if (octets[0] != "10" || octets[1] != "30" || octets[2] != "0"
             || int.Parse(octets[3], CultureInfo.InvariantCulture) is < 2 or >= 240
-            || profile.AllowedIps.Trim() != "10.40.0.0/24" || profile.Keepalive != 25)
-            throw new ClientException("Этот этап поддерживает только согласованный VPN-профиль: 10.30.0.0/24 → 10.40.0.0/24, keepalive 25. Маршруты не изменены.");
+            || profile.Keepalive != 25)
+            throw new ClientException("Профиль VPN не соответствует разрешённому диапазону адресов или keepalive 25.");
         PublicKey = state.PublicKey;
         ServerPublicKey = profile.ServerPublicKey;
         Name = "avt-" + Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(PublicKey)))[..24].ToLowerInvariant();
         Configuration = "[Interface]\nPrivateKey = " + state.PrivateKey
             + "\nAddress = " + profile.VpnIp + "/32\n\n[Peer]\nPublicKey = " + ServerPublicKey
             + "\nEndpoint = " + profile.Endpoint
-            + "\nAllowedIPs = 10.40.0.0/24\nPersistentKeepalive = 25\n";
+            + "\nAllowedIPs = " + AllowedIps + "\nPersistentKeepalive = 25\n";
     }
 
     public static bool HasRecentHandshake(string output, string expectedPeer, DateTimeOffset now)

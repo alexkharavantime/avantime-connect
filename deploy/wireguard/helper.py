@@ -96,14 +96,87 @@ def interface_ips():
     data = json.loads(run([IP, '-j', 'address', 'show', 'dev', INTERFACE]))
     return [a['local'] for item in data for a in item.get('addr_info', [])]
 
+def access_policy(environments, revision):
+    if (not isinstance(environments, list) or not environments
+            or any(type(e) is not str or e not in ('dev', 'prod') for e in environments)
+            or environments != sorted(set(environments))
+            or type(revision) is not int or not 0 <= revision <= 2147483647):
+        raise Refused('Invalid access policy')
+    return environments, revision
+
+def access_enabled():
+    return (STATE / 'access-enabled').is_file()
+
+def read_groups():
+    path = STATE / 'access-users.json'
+    return json.loads(path.read_text()) if path.exists() else {}
+
+def write_group(req, allow_newer=False):
+    groups = read_groups()
+    old = groups.get(req['group'])
+    if old and (old['revision'] > req['revision'] or (old['revision'] == req['revision'] and old['environments'] != req['environments'])):
+        if allow_newer and old['revision'] > req['revision']:
+            return old
+        raise Refused('Stale or conflicting user access revision')
+    groups[req['group']] = {'revision': req['revision'], 'environments': req['environments']}
+    atomic(STATE / 'access-users.json', json.dumps(groups, sort_keys=True))
+    return groups[req['group']]
+
+def firewall_text(managed):
+    # Dedicated table: never flush the ruleset or modify iptables-nft NAT.
+    lines = ['add table inet avantime_access',
+             'add chain inet avantime_access forward { type filter hook forward priority -10; policy accept; }',
+             'flush chain inet avantime_access forward']
+    groups = read_groups()
+    for record in sorted(managed.values(), key=lambda r: r['ip']):
+        ip = str(ipaddress.IPv4Address(record['ip']))
+        if ipaddress.ip_address(ip) not in POOL:
+            raise Refused('Invalid access journal address')
+        if record.get('group') and record['group'] not in groups:
+            raise Refused('Missing user access journal')
+        assigned = groups.get(record.get('group'), {})
+        envs, _ = access_policy(assigned.get('environments', record.get('environments', ['prod'])), assigned.get('revision', record.get('access_revision', 0)))
+        prefix = 'add rule inet avantime_access forward iifname "wg0" ip saddr ' + ip
+        if record['state'] in ('active', 'pending_add'):
+            for environment in envs:
+                destination = '10.20.0.20/32' if environment == 'dev' else '10.40.0.0/24'
+                lines.append(prefix + ' ip daddr ' + destination + ' counter accept')
+        lines.append(prefix + ' counter drop')
+    return '\n'.join(lines) + '\n'
+
+def enforce_access(managed):
+    if not access_enabled():
+        raise Refused('Server access control is not enabled')
+    subprocess.run(['/usr/sbin/nft', '-f', '-'], input=firewall_text(managed),
+        text=True, check=True, capture_output=True, timeout=10,
+        env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+
+def restore_access():
+    # Runs before wg-quick on boot. A failure prevents wg0 starting via Requires.
+    with (STATE / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = STATE / 'managed.json'
+        enforce_access(json.loads(path.read_text()) if path.exists() else {})
+
 def validate(req):
-    if not isinstance(req, dict) or req.get('action') not in ('status', 'add', 'remove'):
+    if not isinstance(req, dict) or req.get('action') not in ('status', 'add', 'remove', 'access', 'user_access'):
         raise Refused('Invalid action')
     if req['action'] == 'status':
         if set(req) != {'action'}:
             raise Refused('Unexpected fields')
         return
-    if set(req) != {'action', 'public_key', 'ip', 'owner'} or not key_ok(req['public_key']):
+    if req['action'] == 'user_access':
+        if set(req) != {'action', 'group', 'environments', 'revision'} or not isinstance(req.get('group'), str) or not re.fullmatch('[a-f0-9]{64}', req['group']):
+            raise Refused('Invalid group access request')
+        access_policy(req['environments'], req['revision'])
+        return
+    fields = {'action', 'public_key', 'ip', 'owner'}
+    if req['action'] == 'access' or (req['action'] == 'add' and 'environments' in req):
+        fields |= {'environments', 'revision', 'group'}
+        if not isinstance(req.get('group'), str) or not re.fullmatch('[a-f0-9]{64}', req['group']):
+            raise Refused('Invalid group')
+        access_policy(req.get('environments'), req.get('revision'))
+    if set(req) != fields or not key_ok(req.get('public_key')):
         raise Refused('Invalid request or public key')
     try:
         if str(uuid.UUID(req['owner'])) != req['owner']:
@@ -134,6 +207,12 @@ def execute(req):
         if req['action'] == 'status':
             return {'ok': True, 'occupied': sorted(occupied),
                     'server_public_key': run([WG, 'show', INTERFACE, 'public-key']).strip()}
+        if req['action'] == 'user_access':
+            if not access_enabled():
+                raise Refused('Server access control is not enabled')
+            write_group(req)
+            enforce_access(managed)
+            return {'ok': True, 'enforced': True, 'environments': req['environments'], 'revision': req['revision']}
         key, ip, owner = req['public_key'], req['ip'], req['owner']
         record = managed.get(key)
         if record and (record['owner'] != owner or record['ip'] != ip):
@@ -152,6 +231,22 @@ def execute(req):
             raise Refused('Managed config changed externally')
         if key in live and live[key] != expected:
             raise Refused('Managed runtime changed externally')
+        if req['action'] == 'access':
+            if not record or record['state'] != 'active' or key not in configured or key not in live:
+                raise Refused('Only an active owned peer accepts access changes')
+            envs, revision = access_policy(req['environments'], req['revision'])
+            old_revision = record.get('access_revision', 0)
+            if revision < old_revision or (revision == old_revision and envs != record.get('environments', ['prod'])):
+                raise Refused('Stale or conflicting access revision')
+            if not access_enabled():
+                raise Refused('Server access control is not enabled')
+            if record.get('group') not in (None, req['group']):
+                raise Refused('Peer already belongs to another group')
+            write_group(req)
+            record.update(environments=envs, access_revision=revision, group=req['group'])
+            atomic(state_path, json.dumps(managed, sort_keys=True))
+            enforce_access(managed)
+            return {'ok': True, 'owner': owner, 'ip': ip, 'environments': envs, 'revision': revision, 'enforced': True}
         if req['action'] == 'add' or not record:
             for other, (_, nets) in configured.items():
                 if other != key and any(ipaddress.ip_address(ip) in ipaddress.ip_network(n) for n in nets):
@@ -163,8 +258,17 @@ def execute(req):
                 raise Refused('Address reserved by another operation')
         # Persistent journal precedes mutations: interrupted requests can be retried.
         created = key not in live
-        managed[key] = {'ip': ip, 'owner': owner, 'state': 'pending_' + req['action']}
+        managed[key] = {**(record or {}), 'ip': ip, 'owner': owner, 'state': 'pending_' + req['action']}
+        if 'environments' in req:
+            if not access_enabled():
+                raise Refused('Server access control is not enabled')
+            if record and record.get('group') not in (None, req['group']):
+                raise Refused('Peer belongs to another group')
+            assigned = write_group(req, allow_newer=True)
+            managed[key].update(environments=assigned['environments'], access_revision=assigned['revision'], group=req['group'])
         atomic(state_path, json.dumps(managed, sort_keys=True))
+        if access_enabled():
+            enforce_access(managed)
         if req['action'] == 'add':
             changed = original if key in configured else original.rstrip() + '\n\n[Peer]\nPublicKey = ' + key + '\nAllowedIPs = ' + ip + '/32\n'
         else:
@@ -200,6 +304,9 @@ def execute(req):
 
 def main():
     try:
+        if os.geteuid() == 0 and sys.argv[1:] == ['--restore-access']:
+            restore_access()
+            return
         if os.geteuid() != 0 or len(sys.argv) != 1:
             raise Refused('Root and no arguments required')
         import signal
@@ -212,8 +319,14 @@ def main():
             raise Refused('Request too large or missing newline')
         result = execute(json.loads(line))
     except Refused as exc:
+        if sys.argv[1:] == ['--restore-access']:
+            print('Access policy restore failed', file=sys.stderr)
+            raise SystemExit(1)
         result = {'ok': False, 'error': str(exc)}
     except Exception:
+        if sys.argv[1:] == ['--restore-access']:
+            print('Access policy restore incomplete', file=sys.stderr)
+            raise SystemExit(1)
         result = {'ok': False, 'error': 'Operation incomplete; retry same request or inspect server'}
     print(json.dumps(result), flush=True)
 

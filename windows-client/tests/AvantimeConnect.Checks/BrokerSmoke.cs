@@ -77,6 +77,19 @@ internal static class BrokerSmoke
             Check(await BrokerClient.ExecuteAsync("check", name) == TunnelResult.WaitingForHandshake, "broker upgrade preserves active tunnel and caller binding");
             Check(await BrokerClient.ExecuteAsync("disconnect", name) == TunnelResult.Stopped, "standard user disconnects without UAC");
             Check(await BrokerClient.ExecuteAsync("check", name) == TunnelResult.Stopped, "standard user checks stopped state without UAC");
+            foreach (var envs in new[] { new[] { "dev", "prod" }, new[] { "dev" }, new[] { "prod" } })
+            {
+                state.Profile!.Environments = envs;
+                state.Profile.AccessRevision++;
+                state.Profile.AllowedIps = string.Join(", ", envs.Select(e => e == "dev" ? "10.20.0.20/32" : "10.40.0.0/24"));
+                state.Profile.RdpHost = envs.Contains("prod") ? "10.40.0.20" : "10.20.0.20";
+                store.Save(state);
+                Check(new TunnelDefinition(state).Name == name, "access update retains tunnel name");
+                Check(await BrokerClient.ExecuteAsync("connect", name) == TunnelResult.WaitingForHandshake,
+                    "standard user applies route-only change to encrypted existing tunnel: " + string.Join(",", envs));
+                Check(await BrokerClient.ExecuteAsync("check", name) == TunnelResult.WaitingForHandshake, "runtime routes match updated profile");
+                Check(await BrokerClient.ExecuteAsync("disconnect", name) == TunnelResult.Stopped, "updated tunnel disconnects without UAC");
+            }
         }
         else throw new ArgumentException();
     }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore Avantime VPN access rules
+After=nftables.service netfilter-persistent.service
+Before=wg-quick@wg0.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/avantime-wg-helper --restore-access
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

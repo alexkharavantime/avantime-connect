@@ -13,10 +13,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type AppType = "desktop" | "remoteapp32" | "remoteapp64";
-export interface User { login: string; full_name: string; app_type: AppType; }
+export interface User { login: string; full_name: string; app_type: AppType; environments?: string[]; access_revision?: number; }
 export interface Device { login: string; device_name: string; vpn_ip: string; public_key: string; revoked: boolean; state?: "pending" | "active" | "revoking" | "revoked"; }
 
 export const api = {
+  setAccess: (login: string, environments: string[], expected_revision: number) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access`, {method: 'POST', body: JSON.stringify({environments, expected_revision})}),
+  retryAccess: (login: string) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access/retry`, {method: 'POST'}),
   listUsers:  () => req<User[]>("/users/"),
   createUser: (u: User) => req<{ login: string }>("/users/", { method: "POST", body: JSON.stringify(u) }),
   createInvite: (login: string) => req<{ token: string; expires_at: string }>(`/invites/${login}`, { method: "POST" }),

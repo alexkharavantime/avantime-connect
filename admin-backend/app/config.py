@@ -3,6 +3,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    access_control_enabled: bool = False
     mongo_uri: str = "mongodb://localhost:27017"
     db_name: str = "avantime_connect"
     vpn_client_pool: str = "10.30.0.0/24"

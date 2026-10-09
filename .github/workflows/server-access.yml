@@ -1,0 +1,39 @@
+name: Server access checks
+on:
+  push:
+    branches: [feature/windows-client]
+    paths: ['admin-backend/**', 'admin-frontend/**', 'deploy/wireguard/**', 'tests/**', '.github/workflows/server-access.yml']
+  pull_request:
+    paths: ['admin-backend/**', 'admin-frontend/**', 'deploy/wireguard/**', 'tests/**', '.github/workflows/server-access.yml']
+permissions:
+  contents: read
+jobs:
+  access-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27018:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install test dependencies
+        run: |
+          python3 -m venv /tmp/access-tests
+          /tmp/access-tests/bin/pip install -r admin-backend/requirements.txt pytest==8.3.5 pytest-asyncio==0.25.3 httpx==0.28.1
+          sudo apt-get update -qq
+          sudo apt-get install -y nftables iproute2 iputils-ping
+      - name: Helper ownership and access regressions
+        run: /tmp/access-tests/bin/python -m pytest tests -q
+      - name: API enrollment, recovery, revocation and access regressions
+        working-directory: admin-backend
+        run: /tmp/access-tests/bin/python -m pytest tests -q
+      - name: Real nftables forwarding in isolated network namespaces
+        run: sudo python3 tests/nft_access_smoke.py
+      - name: Build administration UI
+        run: npm ci --prefix admin-frontend && npm run build --prefix admin-frontend

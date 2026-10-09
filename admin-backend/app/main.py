@@ -28,7 +28,7 @@ async def health():
 @app.middleware("http")
 async def admin_auth(request, call_next):
     path = request.url.path.rstrip("/")
-    protected = path.startswith("/api/") and path not in ("/api/health", "/api/enroll")
+    protected = path.startswith("/api/") and path not in ("/api/health", "/api/enroll", "/api/enroll/profile")
     # A configured token is enforced in every mode; SSH mode fails closed without one.
     if protected and (settings.admin_api_token or settings.wg_mode == "ssh"):
         expected = "Bearer " + settings.admin_api_token

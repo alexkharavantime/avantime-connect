@@ -65,9 +65,12 @@ async def occupied_networks():
     except (KeyError, ValueError, TypeError):
         raise WireGuardError('Invalid occupied-address response')
 
-async def add_peer(public_key, client_ip, owner):
+async def add_peer(public_key, client_ip, owner, environments=None, revision=0, group=None):
     validate_public_key(public_key)
-    result = await request({'action': 'add', 'public_key': public_key, 'ip': client_ip, 'owner': owner})
+    payload = {'action': 'add', 'public_key': public_key, 'ip': client_ip, 'owner': owner}
+    if environments is not None:
+        payload.update(environments=environments, revision=revision, group=group)
+    result = await request(payload)
     if (result.get('state') != 'active' or result.get('owner') != owner
             or result.get('ip') != client_ip or type(result.get('created')) is not bool):
         raise WireGuardError('Unexpected add result')
@@ -79,3 +82,17 @@ async def remove_peer(public_key, client_ip, owner):
     if (result.get('state') != 'revoked' or result.get('owner') != owner
             or result.get('ip') != client_ip or result.get('absence_confirmed') is not True):
         raise WireGuardError('Unexpected remove result')
+
+async def set_access(public_key, client_ip, owner, environments, revision, group):
+    validate_public_key(public_key)
+    result = await request({'action': 'access', 'public_key': public_key, 'ip': client_ip,
+                            'owner': owner, 'environments': environments, 'revision': revision, 'group': group})
+    if (result.get('owner') != owner or result.get('ip') != client_ip
+            or result.get('environments') != environments or result.get('revision') != revision
+            or result.get('enforced') is not True):
+        raise WireGuardError('Access enforcement not confirmed')
+
+async def set_user_access(group, environments, revision):
+    result = await request({'action': 'user_access', 'group': group, 'environments': environments, 'revision': revision})
+    if result.get('enforced') is not True or result.get('revision') != revision or result.get('environments') != environments:
+        raise WireGuardError('User access enforcement not confirmed')

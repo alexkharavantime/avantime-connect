@@ -27,7 +27,7 @@
    <Border x:Name="TunnelPanel" Visibility="Collapsed" Background="White" CornerRadius="12" Padding="20" Margin="0,0,0,16">
     <StackPanel>
      <TextBlock Text="VPN" FontSize="20" FontWeight="SemiBold"/>
-     <TextBlock Text="Подключение к рабочей сети 10.40.0.0/24. Управление выполняет служба Avantime Connect."
+     <TextBlock Text="Подключение к разрешённым рабочим серверам. Управление выполняет служба Avantime Connect."
        TextWrapping="Wrap" Foreground="#536575" Margin="0,8,0,12"/>
      <WrapPanel>
       <Button x:Name="ConnectVpn" Content="Подключить VPN" Tag="connect" Click="Tunnel_Click" Background="#1764A0" Foreground="White" Margin="0,0,8,8"/>
@@ -42,12 +42,16 @@
    <Border x:Name="DesktopPanel" Visibility="Collapsed" Background="White" CornerRadius="12" Padding="20" Margin="0,0,0,16">
     <StackPanel>
      <TextBlock Text="Рабочий стол" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
-     <Button x:Name="OpenProd" Content="Открыть PROD" IsEnabled="False" Click="OpenProd_Click"
+     <WrapPanel>
+     <Button x:Name="OpenDev" Content="Открыть DEV" IsEnabled="False" Click="OpenProd_Click" Tag="dev" Margin="0,0,8,8"/>
+     <Button x:Name="RefreshAccess" Content="Обновить доступ" Click="RefreshAccess_Click" Margin="0,0,8,8"/>
+     <Button x:Name="OpenProd" Tag="prod" Content="Открыть PROD" IsEnabled="False" Click="OpenProd_Click"
        Background="#1764A0" Foreground="White" HorizontalAlignment="Left"/>
+     </WrapPanel>
      <TextBlock x:Name="DesktopStatus" TextWrapping="Wrap" Margin="0,12,0,0"/>
     </StackPanel>
    </Border>
-   <TextBlock Text="Доступ к DEV и запуск RemoteApp будут добавлены отдельно."
+   <TextBlock Text="DEV: WIN-APP-DEV, 10.20.0.20. PROD: 10.40.0.20. Доступ назначает администратор. RemoteApp будет добавлен отдельно."
        TextWrapping="Wrap" Foreground="#536575"/>
   </StackPanel>
  </ScrollViewer>

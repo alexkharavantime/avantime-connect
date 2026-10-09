@@ -68,7 +68,28 @@ public static class ProtectedTunnelFiles
         finally { CryptographicOperations.ZeroMemory(plain); CryptographicOperations.ZeroMemory(expected); }
     }
 
-    public static void Create(string path, TunnelDefinition definition)
+    // Accept only route-only transitions between the fixed DEV/PROD policies.
+    // Private key, address, endpoint, peer and all other bytes must still match.
+    public static void VerifyIdentity(string path, TunnelDefinition definition)
+    {
+        ValidateFile(path);
+        if (new FileInfo(path).Length is < 1 or > 65536) throw new InvalidDataException();
+        var plain = TunnelDpapi.Unprotect(File.ReadAllBytes(path), definition.Name);
+        try
+        {
+            foreach (var routes in TunnelDefinition.SupportedRoutes)
+            {
+                var candidate = Encoding.UTF8.GetBytes(definition.Configuration.Replace(
+                    "\nAllowedIPs = " + definition.AllowedIps + "\n", "\nAllowedIPs = " + routes + "\n"));
+                try { if (CryptographicOperations.FixedTimeEquals(plain, candidate)) return; }
+                finally { CryptographicOperations.ZeroMemory(candidate); }
+            }
+            throw new InvalidDataException("Foreign tunnel identity.");
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
+    public static void Create(string path, TunnelDefinition definition, bool replaceRoutes = false)
     {
         ValidateDirectory(Path.GetDirectoryName(path)!);
         var plain = Encoding.UTF8.GetBytes(definition.Configuration);
@@ -90,7 +111,8 @@ public static class ProtectedTunnelFiles
                 fileAcl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
             new FileInfo(temporary).SetAccessControl(fileAcl);
             ValidateFile(temporary);
-            File.Move(temporary, path, overwrite: false);
+            if (replaceRoutes) VerifyIdentity(path, definition);
+            File.Move(temporary, path, overwrite: replaceRoutes);
             Verify(path, definition);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }

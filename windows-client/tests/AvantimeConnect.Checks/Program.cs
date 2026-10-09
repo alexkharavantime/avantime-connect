@@ -115,6 +115,43 @@ foreach (string ip in new[] { "10.30.0.240", "10.30.0.241", "10.30.0.242", "10.2
     await Reject(() => Task.FromResult(new TunnelDefinition(tunnelState)), "reserved or foreign interface address rejected");
 }
 tunnelState.Profile.VpnIp = "10.30.0.12";
+// Access refresh preserves device identity and rejects unexpected server changes.
+var refreshStore = new MemoryStore();
+tunnelState.ApiOrigin = "https://vpn.example";
+tunnelState.Token = "refresh-test-token";
+tunnelState.DeviceName = "REFRESH-PC";
+refreshStore.Save(tunnelState);
+foreach (var envs in new[] { new[] { "dev", "prod" }, new[] { "dev" }, new[] { "prod" } })
+{
+    var fresh = refreshStore.Load()!.Profile!;
+    fresh.Environments = envs;
+    fresh.AccessRevision++;
+    fresh.AllowedIps = string.Join(", ", envs.Select(e => e == "dev" ? "10.20.0.20/32" : "10.40.0.0/24"));
+    fresh.RdpHost = envs.Contains("prod") ? "10.40.0.20" : "10.20.0.20";
+    using var refreshHttp = new HttpClient(new FakeTransport(async request =>
+    {
+        var json = await request.Content!.ReadAsStringAsync();
+        Check(request.RequestUri!.AbsolutePath == "/api/enroll/profile" && !json.Contains(tunnelState.PrivateKey), "refresh uses bound public identity without private key");
+        return new HttpResponseMessage(HttpStatusCode.OK) {Content = new StringContent(JsonSerializer.Serialize(fresh))};
+    }));
+    await new EnrollmentService(refreshHttp, refreshStore, keys).RefreshAccessAsync();
+    var refreshed = refreshStore.Load()!;
+    Check(new TunnelDefinition(refreshed).Name == tunnel.Name && refreshed.PrivateKey == tunnelState.PrivateKey
+        && refreshed.Profile!.VpnIp == tunnelState.Profile.VpnIp, "policy update preserves key, address and tunnel identity");
+    Check(TunnelDefinition.Environments(refreshed.Profile!).SequenceEqual(envs), "DEV/PROD routes match assigned environments");
+}
+foreach (var change in new Action<EnrollmentProfile>[] {
+    p => p.AccessRevision = 0, p => p.VpnIp = "10.30.0.99", p => p.Endpoint = "other.example:51820",
+    p => p.AllowedIps = "10.20.0.0/24", p => p.Environments = ["dev"], p => p.Environments = ["dev", "dev"] })
+{
+    var before = refreshStore.Data;
+    var fresh = refreshStore.Load()!.Profile!;
+    change(fresh);
+    using var refreshHttp = new HttpClient(new FakeTransport(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {Content = new StringContent(JsonSerializer.Serialize(fresh))})));
+    await Reject(() => new EnrollmentService(refreshHttp, refreshStore, keys).RefreshAccessAsync(), "invalid or older access response rejected");
+    Check(refreshStore.Data == before, "failed refresh preserves stored profile");
+}
 var now = DateTimeOffset.FromUnixTimeSeconds(2000);
 Check(TunnelDefinition.HasRecentHandshake(tunnel.ServerPublicKey + "\t1999", tunnel.ServerPublicKey, now), "fresh expected peer handshake accepted");
 foreach (string output in new[] { tunnel.ServerPublicKey + "\t0", tunnel.ServerPublicKey + "\t1819",

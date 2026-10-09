@@ -29,10 +29,16 @@ public sealed class WindowsTunnelController
         using (operationLock)
         {
             var path = Path.Combine(directory, definition.Name + ".conf.dpapi");
+            bool updateRoutes = false;
             bool installed = ServiceExists(definition.ServiceName);
             try
             {
-                if (File.Exists(path)) ProtectedTunnelFiles.Verify(path, definition);
+                if (File.Exists(path))
+                {
+                    ProtectedTunnelFiles.VerifyIdentity(path, definition);
+                    try { ProtectedTunnelFiles.Verify(path, definition); }
+                    catch (InvalidDataException) { updateRoutes = true; }
+                }
                 else if (installed) return TunnelResult.OwnershipMismatch;
                 if (installed) VerifyService(definition.ServiceName, path);
             }
@@ -42,6 +48,19 @@ public sealed class WindowsTunnelController
             if (action == "connect")
             {
                 if (OtherTunnelActive(definition.ServiceName)) return TunnelResult.OtherTunnelActive;
+                if (updateRoutes)
+                {
+                    if (installed)
+                    {
+                        using var oldService = new ServiceController(definition.ServiceName);
+                        if (oldService.Status != ServiceControllerStatus.Stopped)
+                        {
+                            oldService.Stop();
+                            await WaitAsync(oldService, ServiceControllerStatus.Stopped, cancellationToken);
+                        }
+                    }
+                    ProtectedTunnelFiles.Create(path, definition, replaceRoutes: true);
+                }
                 if (!File.Exists(path)) ProtectedTunnelFiles.Create(path, definition);
                 if (!installed)
                 {
@@ -85,7 +104,8 @@ public sealed class WindowsTunnelController
                 return TunnelResult.OwnershipMismatch;
             var routes = (await WgAsync(definition.Name, "allowed-ips", cancellationToken))
                 .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (routes.Length != 2 || routes[0] != definition.ServerPublicKey || routes[1] != "10.40.0.0/24")
+            if (routes.Length < 2 || routes[0] != definition.ServerPublicKey
+                || !routes.Skip(1).OrderBy(r => r).SequenceEqual(definition.AllowedIps.Split(", ").OrderBy(r => r)))
                 return TunnelResult.OwnershipMismatch;
 
             var wait = Stopwatch.StartNew();

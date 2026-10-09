@@ -132,9 +132,25 @@ print('Audit API: OK')
     static('publish')
     # Verify the actual HTTPS virtual host without relying on external DNS.
     def https(path):
-        return subprocess.check_output(['curl','--noproxy','*','--fail','--silent','--show-error',
-            '--max-time','15','--resolve','connect.avantime.lv:443:127.0.0.1',
-            'https://connect.avantime.lv'+path])
+        import http.client
+        import ssl
+        class LocalHTTPS(http.client.HTTPSConnection):
+            def connect(self):
+                transport = socket.create_connection(('127.0.0.1', 443), timeout=self.timeout)
+                try:
+                    self.sock = ssl.create_default_context().wrap_socket(
+                        transport, server_hostname=self.host)
+                except Exception:
+                    transport.close()
+                    raise
+        conn = LocalHTTPS('connect.avantime.lv', timeout=15)
+        try:
+            conn.request('GET', path, headers={'Cache-Control': 'no-cache'})
+            response = conn.getresponse()
+            assert response.status == 200, 'HTTPS returned ' + str(response.status)
+            return response.read()
+        finally:
+            conn.close()
     assert https('/?release='+revision) == (new / 'dist/index.html').read_bytes(), 'Nginx serves a different index'
     assert json.loads(https('/api/health')).get('status') == 'ok'
     import re
@@ -144,7 +160,7 @@ print('Audit API: OK')
         assert https(asset) == (new / 'dist' / asset.lstrip('/')).read_bytes(), 'Asset mismatch'
     print('HTTPS website 0.5.1: OK')
 except Exception as exc:
-    print('Update failed:', type(exc).__name__, '; restoring previous API and website.', flush=True)
+    print('Update failed:', type(exc).__name__, ('missing file: ' + str(exc.filename)) if isinstance(exc, FileNotFoundError) else '', '; restoring previous API and website.', flush=True)
     static('restore')
     replace(original)
     run(compose + ['up','-d','--no-deps','--force-recreate','api'])

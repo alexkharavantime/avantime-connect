@@ -22,6 +22,9 @@ jobs:
         run: dotnet build windows-client/AvantimeConnect.sln -c Release --nologo
       - name: Check enrollment and Windows protected storage
         run: dotnet run --project windows-client/tests/AvantimeConnect.Checks -c Release --no-build
+      - name: Check native split DNS ownership and lifecycle
+        shell: powershell
+        run: ./windows-client/tests/SplitDnsSmoke.ps1 -Script "$PWD/windows-client/src/AvantimeConnect.Core/WireGuard/SplitDns.ps1"
       - name: Install official WireGuard on disposable runner
         shell: pwsh
         run: |
@@ -52,12 +55,12 @@ jobs:
         run: ./windows-client/installer/Build-Installer.ps1
       - name: Test fresh install, repeat install and uninstall
         shell: pwsh
-        run: ./windows-client/installer/Test-Installer.ps1 -Setup "$PWD/artifacts/windows-installer/AvantimeConnect-Setup-0.4.1-x64.exe"
+        run: ./windows-client/installer/Test-Installer.ps1 -Setup "$PWD/artifacts/windows-installer/AvantimeConnect-Setup-0.4.2-x64.exe"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: AvantimeConnect-Setup-0.4.1-x64
+          name: AvantimeConnect-Setup-0.4.2-x64
           path: |
-            artifacts/windows-installer/AvantimeConnect-Setup-0.4.1-x64.exe
+            artifacts/windows-installer/AvantimeConnect-Setup-0.4.2-x64.exe
             artifacts/windows-installer/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30

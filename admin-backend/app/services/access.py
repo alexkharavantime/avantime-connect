@@ -14,8 +14,12 @@ def policy(user):
     return AccessSettings(environments=user.get('environments', ['prod'])).environments, user.get('access_revision', 0)
 
 def profile_fields(environments, revision):
+    routes = [('10.40.0.0/24' if e == 'prod' else HOSTS[e] + '/32') for e in environments]
+    # PROD already includes DNS; DEV receives only the DNS host, not PROD access.
+    if 'prod' not in environments:
+        routes.append('10.40.0.10/32')
     return {'environments': environments, 'access_revision': revision,
-            'allowed_ips': ', '.join(('10.40.0.0/24' if e == 'prod' else HOSTS[e] + '/32') for e in environments),
+            'allowed_ips': ', '.join(routes),
             'rdp_host': HOSTS['prod' if 'prod' in environments else 'dev']}
 
 async def reconcile(dev):

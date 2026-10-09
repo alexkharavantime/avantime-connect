@@ -14,14 +14,16 @@ public sealed class TunnelDefinition
     public string ServerPublicKey { get; }
     public string Configuration { get; }
     public string AllowedIps { get; }
-    public static readonly string[] SupportedRoutes = ["10.40.0.0/24", "10.20.0.20/32", "10.20.0.20/32, 10.40.0.0/24"];
+    public static readonly string[] SupportedRoutes = ["10.40.0.0/24", "10.20.0.20/32", "10.20.0.20/32, 10.40.0.10/32", "10.20.0.20/32, 10.40.0.0/24"];
     public static string[] Environments(EnrollmentProfile profile)
     {
         var envs = profile.Environments ?? ["prod"];
         if (envs.Length is < 1 or > 2 || envs.Distinct().Count() != envs.Length
             || envs.Any(e => e is not ("prod" or "dev"))) throw new ClientException("Некорректный список разрешённых серверов.");
         var expected = string.Join(", ", envs.OrderBy(e => e).Select(e => e == "dev" ? "10.20.0.20/32" : "10.40.0.0/24"));
-        if (profile.AllowedIps.Trim() != expected || profile.AccessRevision < 0
+        var routesMatch = profile.AllowedIps.Trim() == expected
+            || (envs.Length == 1 && envs[0] == "dev" && profile.AllowedIps.Trim() == "10.20.0.20/32, 10.40.0.10/32");
+        if (!routesMatch || profile.AccessRevision < 0
             || profile.RdpHost != (envs.Contains("prod") ? "10.40.0.20" : "10.20.0.20"))
             throw new ClientException("Маршруты не соответствуют разрешённым серверам.");
         return envs;
@@ -34,8 +36,10 @@ public sealed class TunnelDefinition
         WireGuardManager.ValidateKey(state.PublicKey);
         var profile = state.Profile;
         WireGuardManager.ValidateProfile(profile);
-        _ = Environments(profile);
-        AllowedIps = profile.AllowedIps.Trim();
+        var environments = Environments(profile);
+        // Migrate legacy DEV routes in the protected tunnel without changing enrollment identity.
+        AllowedIps = environments.Length == 1 && environments[0] == "dev"
+            ? "10.20.0.20/32, 10.40.0.10/32" : profile.AllowedIps.Trim();
         var octets = profile.VpnIp.Split('.');
         if (octets[0] != "10" || octets[1] != "30" || octets[2] != "0"
             || int.Parse(octets[3], CultureInfo.InvariantCulture) is < 2 or >= 240
@@ -73,5 +77,6 @@ public enum TunnelResult
     OtherTunnelActive = 23,
     OwnershipMismatch = 24,
     Busy = 25,
-    Failed = 26
+    Failed = 26,
+    DnsFailed = 27
 }

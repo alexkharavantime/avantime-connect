@@ -1,4 +1,4 @@
-param([string]$Version = '0.4.1')
+param([string]$Version = '0.4.2')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

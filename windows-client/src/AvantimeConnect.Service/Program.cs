@@ -8,6 +8,18 @@ using AvantimeConnect.Core.Broker;
 using AvantimeConnect.Core.Enrollment;
 using AvantimeConnect.Core.WireGuard;
 
+if (args is ["--cleanup-dns"])
+{
+    using var identity = WindowsIdentity.GetCurrent();
+    if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) return 26;
+    try
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        await SplitDnsManager.ApplyAsync(false, timeout.Token);
+        return 0;
+    }
+    catch { return 27; }
+}
 if (args.Length != 0 || !WindowsIdentity.GetCurrent().IsSystem) return 26;
 ServiceBase.Run(new BrokerService());
 return 0;
@@ -17,6 +29,7 @@ sealed class BrokerService : ServiceBase
     private readonly CancellationTokenSource shutdown = new();
     private NamedPipeServerStream? pipe;
     private Task? worker;
+    private Task? dnsWorker;
     public BrokerService() { ServiceName = BrokerClient.ServiceName; AutoLog = false; }
     protected override void OnStart(string[] args)
     {
@@ -24,12 +37,28 @@ sealed class BrokerService : ServiceBase
         // handle for the whole service lifetime; no name-squatting gap per request.
         pipe = CreatePipe();
         worker = Task.Run(RunAsync);
+        dnsWorker = Task.Run(async () =>
+        {
+            while (!shutdown.IsCancellationRequested)
+            {
+                try
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(40));
+                    await WindowsTunnelController.ReconcileDnsAsync(timeout.Token);
+                }
+                catch { /* A client check returns the actionable DNS error. */ }
+                try { await Task.Delay(TimeSpan.FromSeconds(30), shutdown.Token); }
+                catch (OperationCanceledException) { break; }
+            }
+        });
     }
     protected override void OnStop()
     {
         shutdown.Cancel();
         pipe?.Dispose();
         try { worker?.GetAwaiter().GetResult(); } catch { }
+        try { dnsWorker?.GetAwaiter().GetResult(); } catch { }
         // Stopping the broker never stops a user's VPN or deletes enrollment.
     }
     private async Task RunAsync()

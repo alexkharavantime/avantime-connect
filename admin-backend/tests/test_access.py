@@ -63,7 +63,7 @@ async def test_failed_application_requires_retry_before_profile_publication(clie
     assert (await client.post('/api/users/flow/access/retry')).status_code == 200
     profile = (await client.post('/api/enroll/profile', json=body)).json()
     assert profile['environments'] == ['dev'] and profile['rdp_host'] == '10.20.0.20'
-    assert profile['allowed_ips'] == '10.20.0.20/32'
+    assert profile['allowed_ips'] == '10.20.0.20/32, 10.40.0.10/32'
 
 async def test_feature_gate_and_invalid_assignment(client):
     assert (await client.post('/api/users/', json={'login': 'dev', 'full_name': 'Dev', 'app_type': 'desktop', 'environments': ['dev']})).status_code == 503
@@ -77,5 +77,5 @@ async def test_new_dev_only_enrollment(client, enable_access):
     token = (await client.post('/api/invites/dev')).json()['token']
     r = await client.post('/api/enroll/', json={'token': token, 'public_key': KEY, 'device_name': 'DEV-PC'})
     assert r.status_code == 200, r.text
-    assert r.json()['allowed_ips'] == '10.20.0.20/32'
+    assert r.json()['allowed_ips'] == '10.20.0.20/32, 10.40.0.10/32'
     assert '10.40.0.0/24' not in enable_access[-1]

@@ -48,6 +48,12 @@
       <Button x:Name="OpenProd" Tag="prod" Content="Открыть PROD" IsEnabled="False" Click="OpenProd_Click"
         Width="176" Height="44" Background="#1764A0" Foreground="White" Margin="0,0,8,8"/>
      </WrapPanel>
+     <StackPanel x:Name="RemoteAppPanel" Visibility="Collapsed" Margin="0,4,0,8">
+      <Button x:Name="OpenRemoteApp" Content="Открыть RemoteApp…" Click="OpenRemoteApp_Click"
+        Width="200" Height="44" HorizontalAlignment="Left" IsEnabled="False"/>
+      <TextBlock Text="Выберите файл .rdp, выданный администратором для PROD. Перед запуском проверяются VPN, DNS и доступ к серверу."
+        TextWrapping="Wrap" Foreground="#536575" Margin="0,8,0,0"/>
+     </StackPanel>
      <Border BorderBrush="#DCE4EC" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,4,0,0">
       <StackPanel>
        <Button x:Name="RefreshAccess" Content="Обновить доступ" Click="RefreshAccess_Click"
@@ -59,7 +65,7 @@
      <TextBlock x:Name="DesktopStatus" TextWrapping="Wrap" Margin="0,12,0,0"/>
     </StackPanel>
    </Border>
-   <TextBlock Text="DEV: WIN-APP-DEV, 10.20.0.20. PROD: 10.40.0.20. Доступ назначает администратор. RemoteApp будет добавлен отдельно."
+   <TextBlock Text="DEV: WIN-APP-DEV, 10.20.0.20. PROD: 10.40.0.20. Доступ назначает администратор. RemoteApp: опубликованный файл для WIN-APP-PROD.AD.AVANTIME.LV."
        TextWrapping="Wrap" Foreground="#536575"/>
   </StackPanel>
  </ScrollViewer>

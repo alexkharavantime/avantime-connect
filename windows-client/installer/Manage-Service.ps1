@@ -21,6 +21,9 @@ try {
             if ($existing) { Start-Service $name }
             throw 'An Avantime tunnel is still active'
         }
+        $brokerExe = Join-Path $env:ProgramFiles 'Avantime Connect\service\AvantimeConnect.Service.exe'
+        & $brokerExe --cleanup-dns
+        if ($LASTEXITCODE -ne 0) { throw 'DNS cleanup failed' }
         if ($existing) { & "$env:SystemRoot\System32\sc.exe" delete $name | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Delete failed' } }
         exit 0
     }

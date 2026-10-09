@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.ServiceProcess;
+using System.Security.Cryptography;
+using AvantimeConnect.Core.Broker;
 using Microsoft.Win32;
 using AvantimeConnect.Core.Enrollment;
 
@@ -23,9 +25,19 @@ public sealed class WindowsTunnelController
 
         var directory = ProtectedTunnelFiles.DirectoryPath;
         ProtectedTunnelFiles.EnsureDirectory(directory);
-        FileStream operationLock;
-        try { operationLock = new FileStream(Path.Combine(directory, "operation.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException) { return TunnelResult.Busy; }
+        FileStream? operationLock = null;
+        var lockWait = Stopwatch.StartNew();
+        // Briefly yield to the background DNS reconciliation rather than making a
+        // normal button click fail immediately. Still bound competing operations.
+        while (operationLock is null)
+        {
+            try { operationLock = new FileStream(Path.Combine(directory, "operation.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException)
+            {
+                if (lockWait.Elapsed >= TimeSpan.FromSeconds(3)) return TunnelResult.Busy;
+                await Task.Delay(150, cancellationToken);
+            }
+        }
         using (operationLock)
         {
             var path = Path.Combine(directory, definition.Name + ".conf.dpapi");
@@ -44,80 +56,174 @@ public sealed class WindowsTunnelController
             }
             catch { return TunnelResult.OwnershipMismatch; }
 
-            if (action != "connect" && !installed) return TunnelResult.NotInstalled;
-            if (action == "connect")
+            if (action != "connect" && !installed)
             {
-                if (OtherTunnelActive(definition.ServiceName)) return TunnelResult.OtherTunnelActive;
-                if (updateRoutes)
+                await ReconcileDnsCoreAsync(cancellationToken);
+                return TunnelResult.NotInstalled;
+            }
+            try
+            {
+                if (action == "connect")
                 {
-                    if (installed)
+                    if (OtherTunnelActive(definition.ServiceName)) return TunnelResult.OtherTunnelActive;
+                    if (updateRoutes)
                     {
-                        using var oldService = new ServiceController(definition.ServiceName);
-                        if (oldService.Status != ServiceControllerStatus.Stopped)
+                        if (installed)
                         {
-                            oldService.Stop();
-                            await WaitAsync(oldService, ServiceControllerStatus.Stopped, cancellationToken);
+                            using var oldService = new ServiceController(definition.ServiceName);
+                            if (oldService.Status != ServiceControllerStatus.Stopped)
+                            {
+                                oldService.Stop();
+                                await WaitAsync(oldService, ServiceControllerStatus.Stopped, cancellationToken);
+                            }
+                        }
+                        ProtectedTunnelFiles.Create(path, definition, replaceRoutes: true);
+                    }
+                    if (!File.Exists(path)) ProtectedTunnelFiles.Create(path, definition);
+                    if (!installed)
+                    {
+                        // Only install when absent: WireGuard's installer can replace an
+                        // existing stopped service, which we intentionally never permit.
+                        try { await RunAsync(WireGuardPath, ["/installtunnelservice", path], cancellationToken); }
+                        finally
+                        {
+                            // An installer can fail after creating its auto-start service.
+                            // Recover that partial outcome without touching foreign services.
+                            if (ServiceExists(definition.ServiceName))
+                            {
+                                VerifyService(definition.ServiceName, path);
+                                SetManualStart(definition.ServiceName);
+                            }
                         }
                     }
-                    ProtectedTunnelFiles.Create(path, definition, replaceRoutes: true);
                 }
-                if (!File.Exists(path)) ProtectedTunnelFiles.Create(path, definition);
-                if (!installed)
+
+                using var service = new ServiceController(definition.ServiceName);
+                if (action != "check") SetManualStart(definition.ServiceName);
+                if (action == "disconnect")
                 {
-                    // Only install when absent: WireGuard's installer can replace an
-                    // existing stopped service, which we intentionally never permit.
-                    try { await RunAsync(WireGuardPath, ["/installtunnelservice", path], cancellationToken); }
-                    finally
+                    if (service.Status != ServiceControllerStatus.Stopped)
                     {
-                        // An installer can fail after creating its auto-start service.
-                        // Recover that partial outcome without touching foreign services.
-                        if (ServiceExists(definition.ServiceName))
-                        {
-                            VerifyService(definition.ServiceName, path);
-                            SetManualStart(definition.ServiceName);
-                        }
+                        service.Stop();
+                        await WaitAsync(service, ServiceControllerStatus.Stopped, cancellationToken);
                     }
+                    await ReconcileDnsCoreAsync(cancellationToken);
+                    return TunnelResult.Stopped;
                 }
-            }
-
-            using var service = new ServiceController(definition.ServiceName);
-            if (action != "check") SetManualStart(definition.ServiceName);
-            if (action == "disconnect")
-            {
-                if (service.Status != ServiceControllerStatus.Stopped)
+                if (service.Status == ServiceControllerStatus.Stopped)
                 {
-                    service.Stop();
-                    await WaitAsync(service, ServiceControllerStatus.Stopped, cancellationToken);
+                    if (action == "check")
+                    {
+                        await ReconcileDnsCoreAsync(cancellationToken);
+                        return TunnelResult.Stopped;
+                    }
+                    service.Start();
                 }
-                return TunnelResult.Stopped;
-            }
-            if (service.Status == ServiceControllerStatus.Stopped)
-            {
-                if (action == "check") return TunnelResult.Stopped;
-                service.Start();
-            }
-            await WaitAsync(service, ServiceControllerStatus.Running, cancellationToken);
+                await WaitAsync(service, ServiceControllerStatus.Running, cancellationToken);
 
-            // Query only non-secret fields. Never use `showconf` or `show ... dump`.
-            if (await WgAsync(definition.Name, "public-key", cancellationToken) != definition.PublicKey
-                || await WgAsync(definition.Name, "peers", cancellationToken) != definition.ServerPublicKey)
-                return TunnelResult.OwnershipMismatch;
-            var routes = (await WgAsync(definition.Name, "allowed-ips", cancellationToken))
-                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (routes.Length < 2 || routes[0] != definition.ServerPublicKey
-                || !routes.Skip(1).OrderBy(r => r).SequenceEqual(definition.AllowedIps.Split(", ").OrderBy(r => r)))
-                return TunnelResult.OwnershipMismatch;
+                // Query only non-secret fields. Never use `showconf` or `show ... dump`.
+                if (await WgAsync(definition.Name, "public-key", cancellationToken) != definition.PublicKey
+                    || await WgAsync(definition.Name, "peers", cancellationToken) != definition.ServerPublicKey)
+                    return TunnelResult.OwnershipMismatch;
+                var routes = (await WgAsync(definition.Name, "allowed-ips", cancellationToken))
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (routes.Length < 2 || routes[0] != definition.ServerPublicKey
+                    || !routes.Skip(1).OrderBy(r => r).SequenceEqual(definition.AllowedIps.Split(", ").OrderBy(r => r)))
+                    return TunnelResult.OwnershipMismatch;
 
-            var wait = Stopwatch.StartNew();
-            do
+                var wait = Stopwatch.StartNew();
+                do
+                {
+                    var handshakes = await WgAsync(definition.Name, "latest-handshakes", cancellationToken);
+                    if (TunnelDefinition.HasRecentHandshake(handshakes, definition.ServerPublicKey, DateTimeOffset.UtcNow))
+                    {
+                        try { await SplitDnsManager.ApplyAsync(true, cancellationToken); }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                        catch
+                        {
+                            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(22));
+                            try { await SplitDnsManager.ApplyAsync(false, cleanup.Token); } catch { }
+                            return TunnelResult.DnsFailed;
+                        }
+                        return TunnelResult.RecentHandshake;
+                    }
+                    if (action == "check" || wait.Elapsed >= TimeSpan.FromSeconds(35)) break;
+                    await Task.Delay(2000, cancellationToken);
+                } while (true);
+                await ReconcileDnsCoreAsync(cancellationToken);
+                return TunnelResult.WaitingForHandshake;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch
             {
-                var handshakes = await WgAsync(definition.Name, "latest-handshakes", cancellationToken);
-                if (TunnelDefinition.HasRecentHandshake(handshakes, definition.ServerPublicKey, DateTimeOffset.UtcNow))
-                    return TunnelResult.RecentHandshake;
-                if (action == "check" || wait.Elapsed >= TimeSpan.FromSeconds(35)) break;
-                await Task.Delay(2000, cancellationToken);
-            } while (true);
-            return TunnelResult.WaitingForHandshake;
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(22));
+                try { await ReconcileDnsCoreAsync(cleanup.Token); } catch { }
+                throw;
+            }
+        }
+    }
+
+    // Startup and periodic repair use only protected machine metadata and non-secret
+    // WireGuard runtime fields. User DPAPI profiles are never read as SYSTEM here.
+    public static async Task ReconcileDnsAsync(CancellationToken token)
+    {
+        ProtectedTunnelFiles.EnsureDirectory(ProtectedTunnelFiles.DirectoryPath);
+        FileStream operationLock;
+        try { operationLock = new FileStream(Path.Combine(ProtectedTunnelFiles.DirectoryPath, "operation.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException) { return; }
+        using (operationLock) { await ReconcileDnsCoreAsync(token); }
+    }
+
+    private static async Task ReconcileDnsCoreAsync(CancellationToken token)
+    {
+        bool active = false;
+        var services = ServiceController.GetServices();
+        try
+        {
+            foreach (var service in services)
+            {
+                if (!service.ServiceName.StartsWith("WireGuardTunnel$avt-", StringComparison.Ordinal)
+                    || service.Status != ServiceControllerStatus.Running) continue;
+                var name = service.ServiceName["WireGuardTunnel$".Length..];
+                if (!BrokerClient.ValidName(name)) continue;
+                var path = Path.Combine(ProtectedTunnelFiles.DirectoryPath, name + ".conf.dpapi");
+                var owner = Path.Combine(ProtectedTunnelFiles.DirectoryPath, name + ".owner");
+                if (!File.Exists(path) || !File.Exists(owner)) continue;
+                ProtectedTunnelFiles.ValidateFile(path);
+                ProtectedTunnelFiles.ValidateFile(owner);
+                VerifyService(service.ServiceName, path);
+                var key = await WgAsync(name, "public-key", token);
+                WireGuardManager.ValidateKey(key);
+                if (name != "avt-" + Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(key)))[..24].ToLowerInvariant()) continue;
+                var peer = await WgAsync(name, "peers", token);
+                WireGuardManager.ValidateKey(peer);
+                var routes = (await WgAsync(name, "allowed-ips", token)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (routes.Length < 2 || routes[0] != peer
+                    || !routes.Skip(1).Any(r => r is "10.40.0.0/24" or "10.40.0.10/32")
+                    || !TunnelDefinition.SupportedRoutes.Any(allowed => allowed.Split(", ").OrderBy(r => r)
+                        .SequenceEqual(routes.Skip(1).OrderBy(r => r)))) continue;
+                if (TunnelDefinition.HasRecentHandshake(await WgAsync(name, "latest-handshakes", token), peer, DateTimeOffset.UtcNow)) active = true;
+            }
+        }
+        // Service shutdown/upgrade must preserve DNS for an already active tunnel.
+        // A new broker instance reconciles any interrupted operation at startup.
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(22));
+            try { await SplitDnsManager.ApplyAsync(false, cleanup.Token); } catch { }
+            throw;
+        }
+        finally { foreach (var service in services) service.Dispose(); }
+        try { await SplitDnsManager.ApplyAsync(active, token); }
+        // Service shutdown/upgrade must preserve DNS for an already active tunnel.
+        // A new broker instance reconciles any interrupted operation at startup.
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(22));
+            try { await SplitDnsManager.ApplyAsync(false, cleanup.Token); } catch { }
+            throw;
         }
     }
 

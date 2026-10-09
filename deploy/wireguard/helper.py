@@ -138,6 +138,11 @@ def firewall_text(managed):
         envs, _ = access_policy(assigned.get('environments', record.get('environments', ['prod'])), assigned.get('revision', record.get('access_revision', 0)))
         prefix = 'add rule inet avantime_access forward iifname "wg0" ip saddr ' + ip
         if record['state'] in ('active', 'pending_add'):
+            # DEV-only peers need domain resolution without access to other PROD
+            # services. PROD already permits this destination via its subnet.
+            if 'prod' not in envs:
+                for protocol in ('udp', 'tcp'):
+                    lines.append(prefix + ' ip daddr 10.40.0.10/32 ' + protocol + ' dport 53 counter accept')
             for environment in envs:
                 destination = '10.20.0.20/32' if environment == 'dev' else '10.40.0.0/24'
                 lines.append(prefix + ' ip daddr ' + destination + ' counter accept')

@@ -302,6 +302,9 @@ def test_access_policy_migration_and_revocation(acl_server):
     assert conf.read_text() == before
     assert h.execute(dict(assigned, environments=['dev'], revision=2))['enforced']
     assert '10.40.0.0/24' not in rules[-1]
+    assert 'ip daddr 10.40.0.10/32 udp dport 53 counter accept' in rules[-1]
+    assert 'ip daddr 10.40.0.10/32 tcp dport 53 counter accept' in rules[-1]
+    assert 'ip daddr 10.40.0.10/32 counter accept' not in rules[-1]
     with pytest.raises(h.Refused, match='revision'):
         h.execute(assigned)
     h.execute(dict(req, action='remove'))

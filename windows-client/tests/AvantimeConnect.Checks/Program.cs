@@ -16,6 +16,8 @@ if (args.Length != 0)
     return;
 }
 
+await RemoteAppChecks.RunAsync();
+
 int passed = 0;
 void Check(bool value, string name)
 {
@@ -151,6 +153,15 @@ foreach (var change in new Action<EnrollmentProfile>[] {
         {Content = new StringContent(JsonSerializer.Serialize(fresh))})));
     await Reject(() => new EnrollmentService(refreshHttp, refreshStore, keys).RefreshAccessAsync(), "invalid or older access response rejected");
     Check(refreshStore.Data == before, "failed refresh preserves stored profile");
+}
+foreach (var routes in new[] { "10.20.0.20/32", "10.20.0.20/32, 10.40.0.10/32" })
+{
+    var devProfile = Profile();
+    devProfile.VpnIp = "10.30.0.15"; devProfile.Environments = ["dev"];
+    devProfile.RdpHost = "10.20.0.20"; devProfile.AllowedIps = routes;
+    var devState = new EnrollmentState { PrivateKey = result.PrivateKey, PublicKey = result.PublicKey, Profile = devProfile };
+    var devTunnel = new TunnelDefinition(devState);
+    Check(devTunnel.AllowedIps == "10.20.0.20/32, 10.40.0.10/32" && devProfile.AllowedIps == routes, "legacy and new DEV profiles add only DNS host without changing saved profile");
 }
 var now = DateTimeOffset.FromUnixTimeSeconds(2000);
 Check(TunnelDefinition.HasRecentHandshake(tunnel.ServerPublicKey + "\t1999", tunnel.ServerPublicKey, now), "fresh expected peer handshake accepted");

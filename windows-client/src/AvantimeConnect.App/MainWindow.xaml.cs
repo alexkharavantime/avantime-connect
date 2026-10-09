@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Windows;
 using AvantimeConnect.Core.Enrollment;
 using AvantimeConnect.Core.WireGuard;
+using AvantimeConnect.Core.Rdp;
 
 namespace AvantimeConnect.App;
 
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
     private string? tunnelName;
     private string? vpnIp;
     private bool prodAvailable;
+    private bool remoteAppAvailable;
     private bool devAvailable;
 
     public MainWindow()
@@ -73,10 +75,13 @@ public partial class MainWindow : Window
             vpnIp = saved.Profile.VpnIp;
             var environments = TunnelDefinition.Environments(saved.Profile);
             prodAvailable = saved.Profile.AppType == "desktop" && environments.Contains("prod");
+            remoteAppAvailable = RemoteAppPreflight.IsAvailable(saved.Profile.AppType, environments);
             devAvailable = saved.Profile.AppType == "desktop" && environments.Contains("dev");
             OpenDev.Visibility = devAvailable ? Visibility.Visible : Visibility.Collapsed;
             OpenProd.Visibility = prodAvailable ? Visibility.Visible : Visibility.Collapsed;
+            RemoteAppPanel.Visibility = remoteAppAvailable ? Visibility.Visible : Visibility.Collapsed;
             OpenDev.IsEnabled = devAvailable;
+            OpenRemoteApp.IsEnabled = remoteAppAvailable;
             OpenProd.IsEnabled = prodAvailable;
             RegistrationPanel.Visibility = Visibility.Collapsed;
             TunnelPanel.Visibility = Visibility.Visible;
@@ -89,7 +94,7 @@ public partial class MainWindow : Window
     {
         if (busy || tunnelName is null || sender is not System.Windows.Controls.Button button || button.Tag is not string action) return;
         busy = true;
-        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = RefreshAccess.IsEnabled = false;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = OpenRemoteApp.IsEnabled = RefreshAccess.IsEnabled = false;
         VpnStatus.Text = "Служба выполняет операцию VPN. Ожидаем результат (до 80 секунд)…";
         try
         {
@@ -104,6 +109,7 @@ public partial class MainWindow : Window
             ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = true;
             OpenProd.IsEnabled = prodAvailable;
             OpenDev.IsEnabled = devAvailable;
+            OpenRemoteApp.IsEnabled = remoteAppAvailable;
             RefreshAccess.IsEnabled = true;
         }
     }
@@ -116,7 +122,7 @@ public partial class MainWindow : Window
         var host = environment == "dev" ? "10.20.0.20" : "10.40.0.20";
         var label = environment!.ToUpperInvariant();
         busy = true;
-        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = RefreshAccess.IsEnabled = false;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = OpenRemoteApp.IsEnabled = RefreshAccess.IsEnabled = false;
         DesktopStatus.Text = $"Проверяем VPN перед открытием {label}…";
         try
         {
@@ -147,15 +153,83 @@ public partial class MainWindow : Window
             ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = true;
             OpenProd.IsEnabled = prodAvailable;
             OpenDev.IsEnabled = devAvailable;
+            OpenRemoteApp.IsEnabled = remoteAppAvailable;
             RefreshAccess.IsEnabled = true;
         }
+    }
+
+    private async void OpenRemoteApp_Click(object sender, RoutedEventArgs e)
+    {
+        if (busy || !remoteAppAvailable || tunnelName is null || vpnIp is null) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Выберите опубликованный файл RemoteApp для PROD",
+            Filter = "Подключение RemoteApp (*.rdp)|*.rdp",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        busy = true;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = OpenRemoteApp.IsEnabled = RefreshAccess.IsEnabled = false;
+        string? snapshot = null;
+        try
+        {
+            byte[] content;
+            using (var source = new FileStream(dialog.FileName, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                if (source.Length > RemoteAppPreflight.MaximumFileBytes)
+                    throw new ClientException("RemoteApp: файл слишком большой.");
+                content = new byte[checked((int)source.Length)];
+                await source.ReadExactlyAsync(content, lifetime.Token);
+            }
+            RemoteAppPreflight.ValidateFile(content);
+            DesktopStatus.Text = "RemoteApp: проверяем VPN…";
+            var result = await TunnelElevation.ExecuteAsync("check", tunnelName);
+            VpnStatus.Text = $"Проверка {DateTime.Now:HH:mm:ss}: " + TunnelElevation.Describe(result);
+            if (result == TunnelResult.DnsFailed)
+                throw new ClientException(TunnelElevation.Describe(result));
+            if (result != TunnelResult.RecentHandshake)
+                throw new ClientException("VPN: RemoteApp не запущен. Подключите VPN и дождитесь handshake.");
+            DesktopStatus.Text = "RemoteApp: проверяем системный DNS и доступность PROD:3389…";
+            await RemoteAppPreflight.CheckAsync(vpnIp, lifetime.Token);
+            // Launch exactly the checked bytes, preserving the publisher signature and server name.
+            var cache = Path.Combine(directory, "RemoteApp");
+            Directory.CreateDirectory(cache);
+            snapshot = Path.Combine(cache, Guid.NewGuid().ToString("N") + ".rdp");
+            await File.WriteAllBytesAsync(snapshot, content, lifetime.Token);
+            var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "mstsc.exe"))
+            { UseShellExecute = false };
+            start.ArgumentList.Add(snapshot);
+            var process = Process.Start(start) ?? throw new IOException();
+            _ = RemoveSnapshotAfterExitAsync(process, snapshot);
+            snapshot = null;
+            DesktopStatus.Text = "RemoteApp: проверка DNS и RDP пройдена. Открыто окно подключения к опубликованному приложению.";
+        }
+        catch (ClientException ex) { DesktopStatus.Text = ex.Message; }
+        catch { DesktopStatus.Text = "RemoteApp: не удалось прочитать файл или запустить клиент удалённого рабочего стола."; }
+        finally
+        {
+            if (snapshot is not null) try { File.Delete(snapshot); } catch { }
+            busy = false;
+            ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = RefreshAccess.IsEnabled = true;
+            OpenProd.IsEnabled = prodAvailable;
+            OpenRemoteApp.IsEnabled = remoteAppAvailable;
+            OpenDev.IsEnabled = devAvailable;
+        }
+    }
+
+    private static async Task RemoveSnapshotAfterExitAsync(Process process, string snapshot)
+    {
+        try { await process.WaitForExitAsync(); File.Delete(snapshot); }
+        catch { /* A stopped client may leave its per-user snapshot for later cleanup. */ }
+        finally { process.Dispose(); }
     }
 
     private async void RefreshAccess_Click(object sender, RoutedEventArgs e)
     {
         if (busy || tunnelName is null) return;
         busy = true;
-        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = RefreshAccess.IsEnabled = false;
+        ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = OpenRemoteApp.IsEnabled = RefreshAccess.IsEnabled = false;
         try
         {
             var status = await TunnelElevation.ExecuteAsync("check", tunnelName);
@@ -173,6 +247,7 @@ public partial class MainWindow : Window
             busy = false;
             ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = RefreshAccess.IsEnabled = true;
             OpenProd.IsEnabled = prodAvailable; OpenDev.IsEnabled = devAvailable;
+            OpenRemoteApp.IsEnabled = remoteAppAvailable;
         }
     }
 

@@ -1,4 +1,4 @@
-# DEV / PROD access (0.4.0)
+# DEV / PROD access (0.4.2)
 
 This release is gated off by default (`access_control_enabled=false`). Installing
 only the Windows package does not grant DEV access. Existing registrations and
@@ -6,7 +6,9 @@ PROD profiles remain usable. Never copy a user's private key to the backend.
 
 ## Policy
 
-- DEV permits forwarding to WIN-APP-DEV `10.20.0.20/32`.
+- DEV permits forwarding to WIN-APP-DEV `10.20.0.20/32`, plus DNS queries
+  to `10.40.0.10` on TCP/UDP port 53 only. Its profile adds `10.40.0.10/32`;
+  this does not grant access to other PROD services or a default route.
 - PROD preserves the existing permitted work network `10.40.0.0/24`, with the
   desktop button fixed to `10.40.0.20`.
 - Each user can have DEV, PROD or both. Revocation still disables the whole device.
@@ -70,3 +72,24 @@ error and remains retryable. Restore failure exits nonzero and prevents wg-quick
 starting through the installed systemd dependency. External firewall managers must
 not flush this table after startup; reapply `avantime-access` rules after such an
 administrative change before allowing new VPN sessions.
+
+## Split DNS upgrade (0.4.2)
+
+Upgrade Windows clients to 0.4.2 before publishing/refreshing the new DEV-only
+profile: older 0.4.0/0.4.1 clients validate the original single-host DEV route and
+reject the new DNS host route. PROD and DEV+PROD route strings are unchanged.
+The 0.4.2 client also supports existing saved DEV profiles and adds the effective
+DNS host route locally; no new invitation, key, VPN IP or assignment is required.
+
+On the VPN VM deploy the updated helper and reapply its access chain using
+`enable-access.sh` (or restart only `avantime-access.service` after replacing the
+helper). Without this step DEV-only clients cannot reach DNS, even with the client
+route installed. Preserve existing SSH authorized keys and the NAT table. The DNS
+exception applies only to active/pending-add managed peers; revoked peers are
+still denied, including DNS. PROD behavior remains unchanged.
+
+Then deploy the backend so new enrollment/current-profile responses contain the
+DEV-only DNS route. Original enrollment recovery snapshots remain immutable.
+Validate system name resolution for `WIN-APP-PROD.AD.AVANTIME.LV` without an explicit
+DNS server, UDP and TCP DNS, and deny DEV-only traffic to `10.40.0.10:3389` and
+`10.40.0.20:3389`. DNS name visibility does not grant RDP permission to PROD.

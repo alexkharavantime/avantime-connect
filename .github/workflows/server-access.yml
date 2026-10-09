@@ -40,7 +40,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: AvantimeConnect-Admin-0.5.0
+          name: AvantimeConnect-Admin-0.5.1
           path: admin-frontend/dist/
           if-no-files-found: error
           retention-days: 30

@@ -25,3 +25,13 @@ export const api = {
   listDevices: () => req<Device[]>("/devices/"),
   revoke: (pk: string) => req<{ status: string }>(`/devices/${encodeURIComponent(pk)}/revoke`, { method: "POST" }),
 };
+
+export interface AuditEvent { _id: string; timestamp: string; action: string; status: string; source: string; actor: string; login?: string; device_name?: string; vpn_ip?: string; environments?: string[]; http_status?: number; }
+export function getAudit(params: URLSearchParams) { return req<{items: AuditEvent[]; total: number}>(`/audit/?${params}`); }
+export async function exportAudit(params: URLSearchParams) {
+  const res = await fetch(`${BASE}/audit/export?${params}`, {headers: {Authorization: `Bearer ${adminToken}`}});
+  if (!res.ok) throw new Error(await res.text());
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a'); a.href = url; a.download = 'avantime-access-journal.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

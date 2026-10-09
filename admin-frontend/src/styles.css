@@ -14,3 +14,18 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; font-siz
 .token { font-family: monospace; background: #f0f0f0; padding: 6px; border-radius: 6px; word-break: break-all; }
 .err { color: #dc2626; font-size: 13px; margin-top: 8px; }
 .ok { color: #16a34a; font-size: 13px; margin-top: 8px; }
+
+.wrap { max-width: 1200px; }
+.table-scroll { overflow-x: auto; }
+h1 small { font-size: 14px; color: #555; }
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+  .wrap { max-width: none; padding: 0; }
+  .card { border: 0; padding: 0; }
+  .table-scroll { overflow: visible; }
+  th, td { font-size: 10px; overflow-wrap: anywhere; }
+  tr { break-inside: avoid; }
+  thead { display: table-header-group; }
+  @page { size: A4 landscape; margin: 12mm; }
+}

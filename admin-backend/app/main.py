@@ -4,7 +4,8 @@ from starlette.responses import JSONResponse
 import secrets
 from app.config import settings
 from app.db.mongo import init_indexes, seed_reserved
-from app.routers import users, devices, invites, enroll, servers
+from app.routers import users, devices, invites, enroll, servers, audit
+from app.services.audit import audited, import_history
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -12,6 +13,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("SSH mode requires admin_api_token of at least 32 characters")
     await init_indexes()
     await seed_reserved()
+    await import_history()
     yield
 
 app = FastAPI(title="Avantime Connect Admin API", lifespan=lifespan)
@@ -20,6 +22,8 @@ app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
 app.include_router(enroll.router,  prefix="/api/enroll",  tags=["enroll"])
 app.include_router(servers.router, prefix="/api/servers", tags=["servers"])
+
+app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
 
 @app.get("/api/health")
 async def health():
@@ -35,4 +39,4 @@ async def admin_auth(request, call_next):
         supplied = request.headers.get("authorization", "")
         if not settings.admin_api_token or not secrets.compare_digest(supplied.encode(), expected.encode()):
             return JSONResponse({"detail": "Требуется ключ администратора"}, status_code=401)
-    return await call_next(request)
+    return await audited(request, call_next)

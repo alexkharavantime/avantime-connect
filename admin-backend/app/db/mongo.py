@@ -5,6 +5,8 @@ client = AsyncIOMotorClient(settings.mongo_uri)
 db = client[settings.db_name]
 
 async def init_indexes():
+    await db.audit_events.create_index([("timestamp", -1), ("_id", -1)])
+    await db.audit_events.create_index([("login", 1), ("timestamp", -1)])
     await db.devices.create_index("vpn_ip", unique=True)
     await db.devices.create_index("public_key", unique=True)
     await db.devices.create_index("enrolled_token", unique=True, sparse=True)

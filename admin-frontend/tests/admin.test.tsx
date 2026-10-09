@@ -90,3 +90,19 @@ test('users: devices are matched by exact login, including revoked devices', asy
   expect(within(old).getByText('OLD-PC')).toBeTruthy();
   expect(within(old).getByText(/отозван/)).toBeTruthy();
 });
+
+test('audit: authenticated journal, version marker, legacy attribution and errors', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.startsWith('/api/audit/')) return new Response(JSON.stringify({total: 1, items: [{
+      _id: 'event-1', timestamp: '2026-10-09T12:00:00', action: 'revoke', status: 'success',
+      source: 'legacy', actor: 'unknown', login: 'Oleg', device_name: 'LIGET', vpn_ip: '10.30.0.15'
+    }]}));
+    return new Response('[]');
+  }));
+  render(<App />);
+  expect(screen.getByText('0.5.1')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', {name: 'Журнал доступа', exact: true}));
+  expect(await screen.findByRole('cell', {name: /LIGET.*10\.30\.0\.15/})).toBeTruthy();
+  expect(screen.getByText('Из прежних данных', {exact: false})).toBeTruthy();
+  expect(screen.getByRole('button', {name: 'Печать всего периода / PDF'})).toBeTruthy();
+});

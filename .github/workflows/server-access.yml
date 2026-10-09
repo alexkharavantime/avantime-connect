@@ -34,6 +34,6 @@ jobs:
         working-directory: admin-backend
         run: /tmp/access-tests/bin/python -m pytest tests -q
       - name: Real nftables forwarding in isolated network namespaces
-        run: sudo python3 tests/nft_access_smoke.py
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT python3 tests/nft_access_smoke.py
       - name: Build administration UI
         run: npm ci --prefix admin-frontend && npm run build --prefix admin-frontend

@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-if os.environ.get('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0:
+if (os.environ.get('GITHUB_ACTIONS') != 'true'
+        or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or os.geteuid() != 0):
     raise SystemExit('Run only as root on the disposable GitHub Actions runner')
 spec = importlib.util.spec_from_file_location('helper', Path(__file__).parents[1] / 'deploy/wireguard/helper.py')
 h = importlib.util.module_from_spec(spec)

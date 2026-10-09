@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, User, AppType } from "../api/client";
+import { api, User, AppType, Device } from "../api/client";
 
 export default function UsersPage() {
+  const [devices, setDevices] = useState<Device[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -16,7 +17,10 @@ export default function UsersPage() {
   async function load() {
     setLoading(true);
     setLoadError("");
-    try { setUsers(await api.listUsers()); }
+    try {
+      const [loadedUsers, loadedDevices] = await Promise.all([api.listUsers(), api.listDevices()]);
+      setUsers(loadedUsers); setDevices(loadedDevices);
+    }
     catch (e) { setLoadError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
@@ -85,11 +89,16 @@ export default function UsersPage() {
         {!loading && !loadError && users.length === 0 && <p>Пользователей пока нет</p>}
         {!loading && !loadError && users.length > 0 && (
         <table>
-          <thead><tr><th>Логин</th><th>Имя</th><th>Тип</th><th>Назначенный доступ</th><th></th></tr></thead>
+          <thead><tr><th>Логин</th><th>Имя</th><th>Тип</th><th>Компьютеры / VPN-IP</th><th>Назначенный доступ</th><th></th></tr></thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.login}>
-                <td>{u.login}</td><td>{u.full_name}</td><td>{u.app_type}</td>
+                <td><code>{u.login}</code></td><td>{u.full_name}</td><td>{u.app_type}</td>
+                <td>{devices.filter(d => d.login === u.login).length === 0 ? "Нет устройств" :
+                  devices.filter(d => d.login === u.login).map(d => <div key={d.public_key} style={{marginBottom: 8}}>
+                    <strong>{d.device_name}</strong><br/><code>{d.vpn_ip}</code>
+                    <span> · {d.state === 'revoked' || d.revoked ? 'отозван' : d.state === 'active' ? 'активен' : 'ожидает / изменяется'}</span>
+                  </div>)}</td>
                 <td><select aria-label={`Доступ ${u.login}`} disabled={accessBusy} value={(u.environments ?? ['prod']).join(',')} onChange={e => changeAccess(u, e.target.value)}>
                   <option value="prod">Только PROD</option><option value="dev">Только DEV</option><option value="dev,prod">DEV и PROD</option>
                 </select><button disabled={accessBusy} onClick={() => changeAccess(u)}>Повторить применение</button></td>

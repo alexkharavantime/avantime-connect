@@ -45,6 +45,29 @@ internal static class RemoteAppChecks
             catch (ClientException) { continue; }
             throw new Exception("Unsafe RDP accepted");
         }
+        if (OperatingSystem.IsWindows())
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "avantime-remoteapp-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var files = new RemoteAppStore(folder);
+                var bytes = Encoding.UTF8.GetBytes(valid);
+                if (files.Load("32") is not null) throw new Exception("Unexpected saved app");
+                files.Save("32", bytes);
+                if (!new RemoteAppStore(folder).Load("32")!.SequenceEqual(bytes)) throw new Exception("Saved RDP changed after restart");
+                if (files.Load("64") is not null) throw new Exception("Slots mixed");
+                if (Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(folder, "remoteapp-32.dpapi"))).Contains("full address")) throw new Exception("Plaintext RDP on disk");
+                try { files.Save("32", Encoding.UTF8.GetBytes("invalid")); throw new Exception("Invalid replacement accepted"); }
+                catch (ClientException) { }
+                if (!files.Load("32")!.SequenceEqual(bytes)) throw new Exception("Bad import destroyed existing app");
+                files.Save("64", bytes);
+                File.Copy(Path.Combine(folder, "remoteapp-32.dpapi"), Path.Combine(folder, "remoteapp-64.dpapi"), true);
+                try { files.Load("64"); throw new Exception("Cross-slot ciphertext accepted"); }
+                catch (System.Security.Cryptography.CryptographicException) { }
+                Console.WriteLine("PASS: persistent RemoteApp slots, restart, unchanged signed bytes and DPAPI protection");
+            }
+            finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+        }
         var connected = false;
         await RemoteAppPreflight.CheckAsync("10.30.0.15", CancellationToken.None,
             (host, _) => host == RemoteAppPreflight.Host

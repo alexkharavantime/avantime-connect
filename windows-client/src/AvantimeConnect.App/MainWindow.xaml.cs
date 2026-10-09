@@ -24,11 +24,13 @@ public partial class MainWindow : Window
     private bool prodAvailable;
     private bool remoteAppAvailable;
     private bool devAvailable;
+    private RemoteAppStore remoteApps = null!;
 
     public MainWindow()
     {
         InitializeComponent();
         directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AvantimeConnect");
+        remoteApps = new RemoteAppStore(directory);
         store = new ProtectedEnrollmentStore(Path.Combine(directory, "enrollment.dpapi"));
         service = new EnrollmentService(http, store, new WireGuardManager());
         DeviceName.Text = Environment.MachineName;
@@ -76,6 +78,9 @@ public partial class MainWindow : Window
             var environments = TunnelDefinition.Environments(saved.Profile);
             prodAvailable = saved.Profile.AppType == "desktop" && environments.Contains("prod");
             remoteAppAvailable = RemoteAppPreflight.IsAvailable(saved.Profile.AppType, environments);
+            RemoteApp32.Visibility = saved.Profile.AppType == "remoteapp64" ? Visibility.Collapsed : Visibility.Visible;
+            RemoteApp64.Visibility = saved.Profile.AppType == "remoteapp32" ? Visibility.Collapsed : Visibility.Visible;
+            RemoteAppVersion.SelectedIndex = saved.Profile.AppType == "remoteapp32" ? 0 : 1;
             devAvailable = saved.Profile.AppType == "desktop" && environments.Contains("dev");
             OpenDev.Visibility = devAvailable ? Visibility.Visible : Visibility.Collapsed;
             OpenProd.Visibility = prodAvailable ? Visibility.Visible : Visibility.Collapsed;
@@ -86,7 +91,7 @@ public partial class MainWindow : Window
             RegistrationPanel.Visibility = Visibility.Collapsed;
             TunnelPanel.Visibility = Visibility.Visible;
             DesktopPanel.Visibility = Visibility.Visible;
-            DesktopStatus.Text = "Доступ: " + string.Join(", ", environments).ToUpperInvariant() + ". Сначала подключите VPN, затем откройте рабочий стол.";
+            DesktopStatus.Text = "Доступ: " + string.Join(", ", environments).ToUpperInvariant() + ". Подключите VPN, затем выберите рабочий стол или приложение.";
         }
     }
 
@@ -130,7 +135,7 @@ public partial class MainWindow : Window
             VpnStatus.Text = $"Проверка {DateTime.Now:HH:mm:ss}: " + TunnelElevation.Describe(result);
             if (result != TunnelResult.RecentHandshake)
             {
-                DesktopStatus.Text = "Рабочий стол не запущен: сначала подключите VPN и дождитесь handshake.";
+                DesktopStatus.Text = result == TunnelResult.DnsFailed ? TunnelElevation.Describe(result) : "VPN: соединение не подтверждено. Подключите VPN и повторите.";
                 return;
             }
             DesktopStatus.Text = $"Проверяем доступ к {label} через VPN…";
@@ -161,26 +166,18 @@ public partial class MainWindow : Window
     private async void OpenRemoteApp_Click(object sender, RoutedEventArgs e)
     {
         if (busy || !remoteAppAvailable || tunnelName is null || vpnIp is null) return;
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Выберите опубликованный файл RemoteApp для PROD",
-            Filter = "Подключение RemoteApp (*.rdp)|*.rdp",
-            CheckFileExists = true,
-            Multiselect = false
-        };
-        if (dialog.ShowDialog(this) != true) return;
+        var slot = RemoteAppVersion.SelectedIndex == 0 ? "32" : "64";
         busy = true;
         ConnectVpn.IsEnabled = DisconnectVpn.IsEnabled = CheckVpn.IsEnabled = OpenProd.IsEnabled = OpenDev.IsEnabled = OpenRemoteApp.IsEnabled = RefreshAccess.IsEnabled = false;
         string? snapshot = null;
         try
         {
-            byte[] content;
-            using (var source = new FileStream(dialog.FileName, FileMode.Open, FileAccess.Read, FileShare.Read))
+            var content = remoteApps.Load(slot);
+            if (content is null)
             {
-                if (source.Length > RemoteAppPreflight.MaximumFileBytes)
-                    throw new ClientException("RemoteApp: файл слишком большой.");
-                content = new byte[checked((int)source.Length)];
-                await source.ReadExactlyAsync(content, lifetime.Token);
+                content = ChooseRemoteApp(slot);
+                if (content is null) return;
+                remoteApps.Save(slot, content);
             }
             RemoteAppPreflight.ValidateFile(content);
             DesktopStatus.Text = "RemoteApp: проверяем VPN…";
@@ -189,7 +186,7 @@ public partial class MainWindow : Window
             if (result == TunnelResult.DnsFailed)
                 throw new ClientException(TunnelElevation.Describe(result));
             if (result != TunnelResult.RecentHandshake)
-                throw new ClientException("VPN: RemoteApp не запущен. Подключите VPN и дождитесь handshake.");
+                throw new ClientException("VPN: RemoteApp не запущен. Подключите VPN и дождитесь подтверждения соединения.");
             DesktopStatus.Text = "RemoteApp: проверяем системный DNS и доступность PROD:3389…";
             await RemoteAppPreflight.CheckAsync(vpnIp, lifetime.Token);
             // Launch exactly the checked bytes, preserving the publisher signature and server name.
@@ -216,6 +213,37 @@ public partial class MainWindow : Window
             OpenRemoteApp.IsEnabled = remoteAppAvailable;
             OpenDev.IsEnabled = devAvailable;
         }
+    }
+
+    private byte[]? ChooseRemoteApp(string slot)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Выберите опубликованный файл 1С " + slot + "-bit для PROD",
+            Filter = "RemoteApp (*.rdp)|*.rdp", CheckFileExists = true, Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return null;
+        using var source = new FileStream(dialog.FileName, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (source.Length > RemoteAppPreflight.MaximumFileBytes) throw new ClientException("RemoteApp: файл слишком большой.");
+        var bytes = new byte[checked((int)source.Length)];
+        source.ReadExactly(bytes);
+        RemoteAppPreflight.ValidateFile(bytes);
+        return bytes;
+    }
+
+    private void ConfigureRemoteApp_Click(object sender, RoutedEventArgs e)
+    {
+        if (busy || !remoteAppAvailable) return;
+        var slot = RemoteAppVersion.SelectedIndex == 0 ? "32" : "64";
+        try
+        {
+            var bytes = ChooseRemoteApp(slot);
+            if (bytes is null) return;
+            remoteApps.Save(slot, bytes);
+            DesktopStatus.Text = "Файл 1С " + slot + "-bit сохранён. Повторно выбирать его при запуске не потребуется.";
+        }
+        catch (ClientException ex) { DesktopStatus.Text = ex.Message; }
+        catch { DesktopStatus.Text = "Не удалось сохранить RemoteApp. Выберите файл заново."; }
     }
 
     private static async Task RemoveSnapshotAfterExitAsync(Process process, string snapshot)

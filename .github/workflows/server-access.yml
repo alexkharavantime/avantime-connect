@@ -36,4 +36,11 @@ jobs:
       - name: Real nftables forwarding in isolated network namespaces
         run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT python3 tests/nft_access_smoke.py
       - name: Build administration UI
-        run: npm ci --prefix admin-frontend && npm run build --prefix admin-frontend
+        run: npm ci --prefix admin-frontend && npm run test:ui --prefix admin-frontend && npm run build --prefix admin-frontend
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: AvantimeConnect-Admin-0.5.0
+          path: admin-frontend/dist/
+          if-no-files-found: error
+          retention-days: 30

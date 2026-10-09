@@ -1,11 +1,15 @@
 <Window x:Class="AvantimeConnect.App.MainWindow"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Avantime Connect" Width="720" Height="820" MinWidth="540" MinHeight="620"
+ Title="Avantime Connect" Icon="Assets/AvantimeConnect.ico" Width="720" Height="820" MinWidth="540" MinHeight="620"
  WindowStartupLocation="CenterScreen" Background="#F4F7FA" Loaded="Window_Loaded">
  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="32">
-   <TextBlock Text="Avantime Connect" FontSize="30" FontWeight="SemiBold" Foreground="#16334B"/>
+   <StackPanel Orientation="Horizontal">
+    <Image Source="Assets/AvantimeConnect.ico" Width="48" Height="48" Margin="0,0,14,0"/>
+    <StackPanel><TextBlock Text="Avantime Connect" FontSize="30" FontWeight="SemiBold" Foreground="#16334B"/>
+    <TextBlock Text="Windows · 0.5.0" Foreground="#536575"/></StackPanel>
+   </StackPanel>
    <TextBlock Text="Компьютер и VPN" FontSize="19" Margin="0,8,0,24"/>
    <Border x:Name="RegistrationPanel" Background="White" CornerRadius="12" Padding="24" BorderBrush="#DCE4EC" BorderThickness="1">
     <StackPanel>
@@ -41,7 +45,7 @@
    </Border>
    <Border x:Name="DesktopPanel" Visibility="Collapsed" Background="White" CornerRadius="12" Padding="20" Margin="0,0,0,16">
     <StackPanel>
-     <TextBlock Text="Рабочий стол" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
+     <TextBlock Text="Рабочие серверы и приложения" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
      <WrapPanel>
       <Button x:Name="OpenDev" Content="Открыть DEV" IsEnabled="False" Click="OpenProd_Click" Tag="dev"
         Width="176" Height="44" Background="#1764A0" Foreground="White" Margin="0,0,8,8"/>
@@ -49,10 +53,17 @@
         Width="176" Height="44" Background="#1764A0" Foreground="White" Margin="0,0,8,8"/>
      </WrapPanel>
      <StackPanel x:Name="RemoteAppPanel" Visibility="Collapsed" Margin="0,4,0,8">
-      <Button x:Name="OpenRemoteApp" Content="Открыть RemoteApp…" Click="OpenRemoteApp_Click"
-        Width="200" Height="44" HorizontalAlignment="Left" IsEnabled="False"/>
-      <TextBlock Text="Выберите файл .rdp, выданный администратором для PROD. Перед запуском проверяются VPN, DNS и доступ к серверу."
-        TextWrapping="Wrap" Foreground="#536575" Margin="0,8,0,0"/>
+      <TextBlock Text="1С · RemoteApp" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,8"/>
+      <WrapPanel>
+       <ComboBox x:Name="RemoteAppVersion" Width="176" Height="44" FontSize="15" VerticalContentAlignment="Center" SelectedIndex="1" Margin="0,0,8,8" AutomationProperties.Name="Разрядность 1С">
+        <ComboBoxItem x:Name="RemoteApp32" Content="1С 32-bit"/>
+        <ComboBoxItem x:Name="RemoteApp64" Content="1С 64-bit"/>
+       </ComboBox>
+       <Button x:Name="OpenRemoteApp" Content="Открыть 1С" Click="OpenRemoteApp_Click" Width="176" Height="44" Background="#1764A0" Foreground="White" IsEnabled="False" Margin="0,0,8,8"/>
+       <Button Content="Выбрать файл…" Click="ConfigureRemoteApp_Click" Width="176" Height="44" Margin="0,0,0,8"/>
+      </WrapPanel>
+      <TextBlock Text="Файл от администратора выбирается один раз для каждой версии 1С. При запуске проверяются VPN, DNS и доступ к серверу."
+        TextWrapping="Wrap" Foreground="#536575" Margin="0,4,0,0"/>
      </StackPanel>
      <Border BorderBrush="#DCE4EC" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,4,0,0">
       <StackPanel>

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../src/App';
 import { setAdminToken } from '../src/api/client';
@@ -69,4 +69,24 @@ test.each([502, 202])('devices: pending revoke and unconfirmed HTTP %i remain re
   expect(await screen.findByRole('cell', { name: 'отозван', exact: true })).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
   expect(attempts).toBe(2);
+});
+
+
+test('users: devices are matched by exact login, including revoked devices', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(
+    url === '/api/users/' ? [
+      {login: 'Oleg', full_name: 'Oleg Dorodnov', app_type: 'desktop'},
+      {login: 'oleg', full_name: 'Oleg Dorodnov', app_type: 'desktop'}
+    ] : [
+      {login: 'Oleg', device_name: 'LIGET', vpn_ip: '10.30.0.15', public_key: 'a', state: 'active'},
+      {login: 'oleg', device_name: 'OLD-PC', vpn_ip: '10.30.0.11', public_key: 'b', state: 'revoked'}
+    ]))));
+  render(<App />);
+  const row = (await screen.findByRole('cell', {name: 'Oleg', exact: true})).closest('tr')!;
+  expect(within(row).getByText('LIGET')).toBeTruthy();
+  expect(within(row).getByText('10.30.0.15')).toBeTruthy();
+  expect(within(row).queryByText('OLD-PC')).toBeNull();
+  const old = screen.getByRole('cell', {name: 'oleg', exact: true}).closest('tr')!;
+  expect(within(old).getByText('OLD-PC')).toBeTruthy();
+  expect(within(old).getByText(/отозван/)).toBeTruthy();
 });

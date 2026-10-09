@@ -26,6 +26,7 @@ OutputBaseFilename=AvantimeConnect-Setup-{#AppVersion}-x64
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\src\AvantimeConnect.App\Assets\AvantimeConnect.ico
 UninstallDisplayIcon={app}\AvantimeConnect.App.exe
 AppMutex=Local\AvantimeConnect.Enrollment
 SetupMutex=AvantimeConnect.Setup

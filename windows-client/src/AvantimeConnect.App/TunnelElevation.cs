@@ -25,8 +25,8 @@ internal static class TunnelElevation
 
     internal static string Describe(TunnelResult result) => result switch
     {
-        TunnelResult.RecentHandshake => "Служба VPN работает. Есть handshake с сервером за последние 3 минуты. Доступ к рабочему столу проверяется отдельно.",
-        TunnelResult.WaitingForHandshake => "Служба VPN работает, но свежего handshake нет. Соединение с сервером не подтверждено. Можно повторить проверку или отключить VPN.",
+        TunnelResult.RecentHandshake => "VPN подключён. Связь с сервером подтверждена, DNS настроен. Доступ к RDP проверяется при запуске.",
+        TunnelResult.WaitingForHandshake => "VPN: ожидаем ответа сервера. Подключение пока не подтверждено. Повторите проверку или отключите VPN.",
         TunnelResult.Stopped => "VPN отключён. Регистрация и сохранённый профиль сохранены.",
         TunnelResult.NotInstalled => "Туннель этого профиля ещё не установлен. Нажмите «Подключить VPN».",
         TunnelResult.WrongAccount => "Для этого этапа подтвердите повышение прав той же учётной записи Windows, в которой выполнена регистрация. Ввод другой учётной записи администратора не поддерживается.",

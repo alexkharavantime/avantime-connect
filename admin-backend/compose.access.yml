@@ -1,0 +1,6 @@
+# Apply only AFTER vpn-dev has the matching helper and enabled access rules.
+# Add this to the existing Compose files with the SAME project name and volumes.
+services:
+  api:
+    environment:
+      access_control_enabled: "true"

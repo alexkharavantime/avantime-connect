@@ -31,11 +31,13 @@ PROD profiles remain usable. Never copy a user's private key to the backend.
    original NAT table are unchanged. Failure must be investigated before proceeding.
 4. Deploy the matching backend/UI commit using the existing Compose configuration
    and persistent Mongo volume. Set `access_control_enabled=true` in the backend
-   environment only after step 3 succeeds. Do not use `docker compose down -v`.
+   environment only after step 3 succeeds. The `admin-backend/compose.access.yml`
+   overlay supplies this flag; keep the same Compose project name and existing
+   configuration files/volumes. Do not use `docker compose down -v`.
    Exact deployment commands depend on the live checkout/Compose overlays; inspect
    these before changing the running release.
-5. In the admin UI, find the exact Oleg and Jelena accounts and verify their devices
-   (previously OLEG-PC `10.30.0.14` and JELENA-PC2 `10.30.0.13`). Select **DEV и PROD**.
+5. In the admin UI, find the selected accounts and verify their registered devices
+   and assigned VPN addresses. Select **DEV и PROD**.
    Wait for an applied confirmation; a saved assignment alone is not success.
    Use **Повторить применение** after fixing a reported application failure.
 6. Upgrade each client under its existing Windows account. Disconnect its VPN,
@@ -43,7 +45,7 @@ PROD profiles remain usable. Never copy a user's private key to the backend.
    key, VPN address and owned encrypted tunnel are retained. New invitations are
    unnecessary. Only the routes and available desktop buttons change.
 7. Check both desktop destinations. Check a PROD-only account cannot connect to
-   `10.20.0.20:3389` through its VPN even if a route is added manually. On Jelena's
+   `10.20.0.20:3389` through its VPN even if a route is added manually. On the client's
    external network, disconnect and verify both private destinations are unavailable.
 
 Do not remove the startup dependency or downgrade the helper after enabling access

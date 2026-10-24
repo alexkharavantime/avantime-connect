@@ -15,13 +15,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export type AppType = "desktop" | "remoteapp32" | "remoteapp64";
 export interface User { login: string; full_name: string; app_type: AppType; environments?: string[]; access_revision?: number; }
 export interface Device { login: string; device_name: string; vpn_ip: string; public_key: string; revoked: boolean; state?: "pending" | "active" | "revoking" | "revoked"; }
+export interface EnrollmentProfile { vpn_ip: string; server_public_key: string; endpoint: string; allowed_ips: string; keepalive: number; }
 
 export const api = {
+  enroll: (input: {token: string; public_key: string; device_name: string}) => req<EnrollmentProfile>("/enroll/", {method: 'POST', body: JSON.stringify(input)}),
   setAccess: (login: string, environments: string[], expected_revision: number) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access`, {method: 'POST', body: JSON.stringify({environments, expected_revision})}),
   retryAccess: (login: string) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access/retry`, {method: 'POST'}),
   listUsers:  () => req<User[]>("/users/"),
   createUser: (u: User) => req<{ login: string }>("/users/", { method: "POST", body: JSON.stringify(u) }),
-  createInvite: (login: string) => req<{ token: string; expires_at: string }>(`/invites/${login}`, { method: "POST" }),
+  createInvite: (login: string) => req<{ token: string; expires_at: string }>(`/invites/${encodeURIComponent(login)}`, { method: "POST" }),
   listDevices: () => req<Device[]>("/devices/"),
   revoke: (pk: string) => req<{ status: string }>(`/devices/${encodeURIComponent(pk)}/revoke`, { method: "POST" }),
 };

@@ -24,6 +24,7 @@ test('native X25519 export is a valid WireGuard key pair and preserves assigned 
   expect(conf).not.toContain('0.0.0.0/0');
   expect(() => renderConfig(keys, {...profile, endpoint: 'vpn:51820\nPostUp = evil'}, '10.40.0.10')).toThrow();
   expect(() => renderConfig(keys, profile, '10.40.0.10\nPostUp = evil')).toThrow();
+  expect(() => renderConfig(keys, {...profile, endpoint: 'vpn.example.com:65536'}, '10.40.0.10')).toThrow();
 });
 
 test('unsupported crypto does not create an invitation', async () => {
@@ -46,6 +47,7 @@ test('lost enrollment response retains identity, never sends private keys, and d
       if (bodies.length === 1) throw new Error('Network response lost');
       return new Response(JSON.stringify(profile));
     }
+    if (url === '/api/enroll/profile') return new Response(JSON.stringify(profile));
     throw new Error('Unexpected request');
   }));
   const createObjectURL = vi.fn(() => 'blob:test');
@@ -73,7 +75,7 @@ test('switching tabs and reapplying admin token preserve the in-memory Mac opera
     if (url === '/api/users/') return new Response(JSON.stringify([{login:'oleg', full_name:'Oleg', app_type:'desktop'}]));
     if (url === '/api/devices/') return new Response('[]');
     if (url.includes('/invites/')) return new Response('{"token":"one-token"}');
-    if (url === '/api/enroll/') return new Response(JSON.stringify(profile));
+    if (url === '/api/enroll/' || url === '/api/enroll/profile') return new Response(JSON.stringify(profile));
     throw new Error('Unexpected request');
   }));
   render(<App />);
@@ -83,4 +85,32 @@ test('switching tabs and reapplying admin token preserve the in-memory Mac opera
   fireEvent.click(screen.getByRole('button', {name: 'Устройства', exact:true}));
   fireEvent.click(screen.getByRole('button', {name: 'Применить', exact:true}));
   await waitFor(() => expect(screen.getByRole('button', {name: 'Скачать .conf'})).toBeTruthy());
+});
+
+test('current access replaces enrollment snapshot before config is offered', async () => {
+  vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/invites/')) return new Response('{"token":"one-token"}');
+    if (url === '/api/enroll/') return new Response(JSON.stringify({...profile, vpn_ip:'10.30.0.8'}));
+    if (url === '/api/enroll/profile') return new Response(JSON.stringify(profile));
+    throw new Error('Unexpected request');
+  }));
+  render(<MacConfig login="oleg" onClose={() => {}} />);
+  fireEvent.click(screen.getByRole('button', {name:'Создать конфигурацию'}));
+  expect((await screen.findByRole('status')).textContent).toContain('10.30.0.7');
+  expect(screen.getByRole('button', {name:'Скачать .conf'})).toBeTruthy();
+});
+
+test.each([410, 503])('unconfirmed current profile HTTP %i does not offer a stale config', async status => {
+  vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/invites/')) return new Response('{"token":"one-token"}');
+    if (url === '/api/enroll/') return new Response(JSON.stringify(profile));
+    if (url === '/api/enroll/profile') return new Response('{"detail":"Профиль недоступен"}', {status});
+    throw new Error('Unexpected request');
+  }));
+  render(<MacConfig login="oleg" onClose={() => {}} />);
+  fireEvent.click(screen.getByRole('button', {name:'Создать конфигурацию'}));
+  expect((await screen.findByRole('alert')).textContent).toContain('Профиль недоступен');
+  expect(screen.queryByRole('button', {name:'Скачать .conf'})).toBeNull();
 });

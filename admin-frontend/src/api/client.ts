@@ -19,6 +19,7 @@ export interface EnrollmentProfile { vpn_ip: string; server_public_key: string; 
 
 export const api = {
   enroll: (input: {token: string; public_key: string; device_name: string}) => req<EnrollmentProfile>("/enroll/", {method: 'POST', body: JSON.stringify(input)}),
+  currentProfile: (input: {token: string; public_key: string; device_name: string}) => req<EnrollmentProfile>("/enroll/profile", {method: 'POST', body: JSON.stringify(input)}),
   setAccess: (login: string, environments: string[], expected_revision: number) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access`, {method: 'POST', body: JSON.stringify({environments, expected_revision})}),
   retryAccess: (login: string) => req<{status: string}>(`/users/${encodeURIComponent(login)}/access/retry`, {method: 'POST'}),
   listUsers:  () => req<User[]>("/users/"),

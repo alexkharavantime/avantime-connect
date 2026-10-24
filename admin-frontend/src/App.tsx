@@ -12,7 +12,7 @@ export default function App() {
   const [macLogin, setMacLogin] = useState<string | null>(null);
   return (
     <div className="wrap">
-      <h1>Avantime Connect — Admin <small>0.5.1</small></h1>
+      <h1>Avantime Connect — Admin <small>0.5.2</small></h1>
       <form className="card no-print" onSubmit={(e) => { e.preventDefault(); setAdminToken(token); setToken(""); setVersion(v => v + 1); }}>
         <label>Ключ администратора <input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} /></label>
         <button type="submit">Применить</button>

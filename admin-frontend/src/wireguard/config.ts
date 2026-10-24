@@ -33,8 +33,10 @@ export function validateDns(value: string): string {
 export function renderConfig(keys: TunnelKeys, profile: EnrollmentProfile, dns: string): string {
   const key = /^[A-Za-z0-9+/]{43}=$/;
   const routes = profile.allowed_ips.split(',').map(v => v.trim());
+  const port = Number(profile.endpoint.slice(profile.endpoint.lastIndexOf(':') + 1));
   if (!key.test(keys.privateKey) || !key.test(profile.server_public_key) || !ipv4(profile.vpn_ip) ||
       !/^[a-zA-Z0-9.:[\]-]+:\d{1,5}$/.test(profile.endpoint) ||
+      port < 1 || port > 65535 ||
       !routes.every(v => { const [ip, bits, extra] = v.split('/'); return !extra && ipv4(ip) && /^\d{1,2}$/.test(bits ?? '') && Number(bits) <= 32; }) ||
       !Number.isInteger(profile.keepalive) || profile.keepalive < 0 || profile.keepalive > 65535) {
     throw new Error('Сервер вернул некорректные параметры туннеля. Конфигурация не выдана.');

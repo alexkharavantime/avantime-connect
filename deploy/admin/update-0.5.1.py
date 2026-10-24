@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run as alex on avg-connect-dev from a checkout of this release after sudo -v."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,10 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+
+parser = argparse.ArgumentParser(description='Update Avantime administration UI and API with rollback')
+parser.add_argument('--release', choices=('0.5.1', '0.5.2'), default='0.5.1')
+release = parser.parse_args().release
 
 assert socket.gethostname() == 'avg-connect-dev', 'Wrong server'
 os.umask(0o077)
@@ -31,7 +36,7 @@ assert len(mounts) == 1
 old = Path(mounts[0]['Source'])
 new = source / 'admin-frontend'
 assert old.resolve() != new.resolve(), 'Use a separate release checkout'
-assert '0.5.1' in (new / 'src/App.tsx').read_text()
+assert f'<small>{release}</small>' in (new / 'src/App.tsx').read_text(), 'Release/header mismatch'
 for file in old.glob('.env*'):
     if file.is_file():
         shutil.copy2(file, new / file.name)
@@ -39,13 +44,13 @@ site = Path('/var/www/avantime-connect')
 run(['sudo', '-n', 'test', '-f', str(site / 'index.html')])
 run(['sudo', '-n', 'nginx', '-t'])
 revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
-image = 'avantime-connect-integration:0.5.1-' + revision[:12]
+image = f'avantime-connect-integration:{release}-' + revision[:12]
 print('Building admin and API from', revision, flush=True)
 run(docker + ['run', '--rm', '-v', str(new)+':/app', '-w', '/app', ui['Config']['Image'],
               'sh', '-c', 'npm ci && npm run test:ui && npm run build'])
 run(docker + ['build', '--label', 'org.opencontainers.image.revision='+revision,
               '-t', image, str(source / 'admin-backend')])
-backup = Path(tempfile.mkdtemp(prefix='avantime-backup-0.5.1-', dir=Path.home()))
+backup = Path(tempfile.mkdtemp(prefix=f'avantime-backup-{release}-', dir=Path.home()))
 (backup / 'compose.before.json').write_bytes(original)
 with (backup / 'mongo.before.archive.gz').open('wb') as out:
     run(docker + ['exec', 'avantime-connect-wg-mongo-1', 'mongodump', '--archive', '--gzip'], stdout=out, timeout=180)
@@ -158,7 +163,7 @@ print('Audit API: OK')
     assert scripts, 'No compiled script in index'
     for asset in scripts:
         assert https(asset) == (new / 'dist' / asset.lstrip('/')).read_bytes(), 'Asset mismatch'
-    print('HTTPS website 0.5.1: OK')
+    print(f'HTTPS website {release}: OK')
 except Exception as exc:
     print('Update failed:', type(exc).__name__, ('missing file: ' + str(exc.filename)) if isinstance(exc, FileNotFoundError) else '', '; restoring previous API and website.', flush=True)
     static('restore')
@@ -166,6 +171,6 @@ except Exception as exc:
     run(compose + ['up','-d','--no-deps','--force-recreate','api'])
     print('Previous configuration restored. Verify previous website/API health. Backup:', backup)
     raise SystemExit(1)
-print('ADMIN + AUDIT 0.5.1: OK')
-print('Open https://connect.avantime.lv and hard-refresh. Header must show 0.5.1.')
+print(f'ADMIN {release}: OK')
+print(f'Open https://connect.avantime.lv and hard-refresh. Header must show {release}.')
 print('Backup:', backup)

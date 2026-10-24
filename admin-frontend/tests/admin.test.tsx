@@ -100,7 +100,7 @@ test('audit: authenticated journal, version marker, legacy attribution and error
     return new Response('[]');
   }));
   render(<App />);
-  expect(screen.getByText('0.5.1')).toBeTruthy();
+  expect(screen.getByText('0.5.2')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', {name: 'Журнал доступа', exact: true}));
   expect(await screen.findByRole('cell', {name: /LIGET.*10\.30\.0\.15/})).toBeTruthy();
   expect(screen.getByText('Из прежних данных', {exact: false})).toBeTruthy();

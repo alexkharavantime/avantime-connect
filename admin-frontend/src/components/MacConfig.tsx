@@ -33,7 +33,11 @@ export default function MacConfig({ login, onClose }: { login: string; onClose: 
       const p = pending.current;
       if (!p.token) p.token = (await api.createInvite(login)).token;
       // A failed/lost response MUST retry the same token, public key and name.
-      const profile = await api.enroll({ token: p.token, public_key: p.keys.publicKey, device_name: p.name });
+      const request = { token: p.token, public_key: p.keys.publicKey, device_name: p.name };
+      await api.enroll(request);
+      // Enrollment recovery returns an immutable snapshot. The confirmed current
+      // profile accounts for access changes and revocation during registration.
+      const profile = await api.currentProfile(request);
       setConfig(renderConfig(p.keys, profile, p.dns)); setIp(profile.vpn_ip);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { inFlight.current = false; setBusy(false); }

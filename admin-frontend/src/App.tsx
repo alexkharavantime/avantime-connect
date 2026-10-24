@@ -3,14 +3,16 @@ import { setAdminToken } from "./api/client";
 import UsersPage from "./pages/UsersPage";
 import AuditPage from "./pages/AuditPage";
 import DevicesPage from "./pages/DevicesPage";
+import MacConfig from "./components/MacConfig";
 
 export default function App() {
   const [tab, setTab] = useState<"users" | "devices" | "audit">("users");
   const [token, setToken] = useState("");
   const [version, setVersion] = useState(0);
+  const [macLogin, setMacLogin] = useState<string | null>(null);
   return (
     <div className="wrap">
-      <h1>Avantime Connect — Admin <small>0.5.1</small></h1>
+      <h1>Avantime Connect — Admin <small>0.5.2</small></h1>
       <form className="card no-print" onSubmit={(e) => { e.preventDefault(); setAdminToken(token); setToken(""); setVersion(v => v + 1); }}>
         <label>Ключ администратора <input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} /></label>
         <button type="submit">Применить</button>
@@ -21,7 +23,11 @@ export default function App() {
         <button className={tab === "devices" ? "active" : ""} onClick={() => setTab("devices")}>Устройства</button>
         <button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>Журнал доступа</button>
       </div>
-      {tab === "users" ? <UsersPage key={version} /> : tab === "devices" ? <DevicesPage key={version} /> : <AuditPage key={version} />}
+      {macLogin !== null && <MacConfig login={macLogin} onClose={() => { setMacLogin(null); setVersion(v => v + 1); }} />}
+      {tab === "users" ? <UsersPage key={version} onMacConfig={login => {
+        if (macLogin !== null) { alert('Сначала сохраните или закройте текущую конфигурацию Mac.'); return; }
+        setMacLogin(login);
+      }} /> : tab === "devices" ? <DevicesPage key={version} /> : <AuditPage key={version} />}
     </div>
   );
 }

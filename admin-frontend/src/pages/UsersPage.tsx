@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, User, AppType, Device } from "../api/client";
 
-export default function UsersPage() {
+export default function UsersPage({ onMacConfig }: { onMacConfig: (login: string) => void }) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +102,8 @@ export default function UsersPage() {
                 <td><select aria-label={`Доступ ${u.login}`} disabled={accessBusy} value={(u.environments ?? ['prod']).join(',')} onChange={e => changeAccess(u, e.target.value)}>
                   <option value="prod">Только PROD</option><option value="dev">Только DEV</option><option value="dev,prod">DEV и PROD</option>
                 </select><button disabled={accessBusy} onClick={() => changeAccess(u)}>Повторить применение</button></td>
-                <td><button className="primary" onClick={() => makeInvite(u.login)}>Приглашение</button></td>
+                <td><button className="primary" onClick={() => makeInvite(u.login)}>Приглашение</button>
+                <button onClick={() => onMacConfig(u.login)}>WireGuard для Mac</button></td>
               </tr>
             ))}
           </tbody>

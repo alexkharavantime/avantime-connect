@@ -1,0 +1,124 @@
+# Аудит безопасности серверов Avantime
+
+Цель: убедиться, что снаружи никто не может попасть на серверы Avantime.
+Домен AD: `ad.avantime.lv` (NetBIOS `AVANTIME`).
+
+## Скрипт `Security-Audit-EN.ps1`
+
+Только читает настройки, ничего не меняет. Все строки на латинице, поэтому
+кодировка файла не важна (Windows PowerShell 5.1 читает UTF-8 без BOM как ANSI,
+из-за этого русская версия ломалась).
+
+Проверяет: обновления и ожидающую перезагрузку, файрвол, слушающие порты
+(RDP, SMB, SQL, 1С 1540/1541/1545/1560–1591, WinRM), NLA и шифрование RDP,
+локальные учётки и администраторов, политику паролей и блокировки, неудачные
+входы за 24 ч и RDP-входы за 7 дней, Defender, SMBv1, общие папки с записью для
+Everyone, учётки служб 1С/SQL, задачи планировщика не от Microsoft.
+
+Отчёт: `C:\SecurityAudit\<HOST>_<дата>.txt`.
+
+### Запуск
+
+1. Скачать **оригинальный** `.ps1` (не копировать через текстовый редактор:
+   файл может сохраниться как RTF) в `C:\Security_Audit\`.
+2. PowerShell **от имени администратора** на проверяемом сервере:
+
+```
+Unblock-File C:\Security_Audit\Security-Audit-EN.ps1
+```
+```
+Set-ExecutionPolicy -Scope Process Bypass -Force; & C:\Security_Audit\Security-Audit-EN.ps1
+```
+
+`-Scope Process` снимает запрет на скрипты только для текущего окна.
+Команды копировать, а не набирать (были опечатки вида `Security-Audut`).
+
+Скрипт не видит, что открыто из интернета: внешний периметр проверяется отдельно
+(см. ниже).
+
+## Серверы
+
+| Сервер | Адрес | Статус |
+|---|---|---|
+| WIN-APP-DEV | 10.20.0.20 | Проверен 20.10.2026, частично исправлен |
+| DEV-ADMIN | — | Windows 11 Pro; удалён из AD (см. открытые вопросы) |
+| ProdAdmin | 10.40.0.30 | Не проверен |
+| web-avg | 10.40.0.50 | Не проверен |
+| Контроллер домена | — | Изменена политика паролей домена; аудит не запускался |
+
+## Результаты WIN-APP-DEV (20.10.2026 15:14): 1 критично, 18 предупреждений
+
+Windows Server 2025 Standard **Evaluation**, сервер 1С 8.3, служба от `.\USR1CV8`.
+
+| Статус | Проверка | Что найдено |
+|---|---|---|
+| КРИТИЧНО | Пароли | Блокировка после неудачных попыток выключена, локально и в домене — **исправлено** |
+| ВНИМАНИЕ | Пароли | Минимальная длина пароля 7 — **исправлено** (12) |
+| ВНИМАНИЕ | SMB | `Incoming` (D:\Incoming), `Install` (D:\Install), `Testing` (D:\Testing): запись для Everyone |
+| ВНИМАНИЕ | Учётки | Встроенный `Administrator` включён, не переименован, пароль бессрочный |
+| ВНИМАНИЕ | RDP | MinEncryptionLevel = 2 (нужно 3) |
+| ВНИМАНИЕ | Порты | 135, 139, 445, 1540, 1541, 1561–1564, 1576 (java), 3389, 5985 — нормально для внутреннего сервера, если не проброшены наружу |
+| ИНФО | Учётки | Админы: AVANTIME\Domain Admins, AVANTIME\GG-DEV-Local-Admins, Administrator. У USR1CV8 бессрочный пароль |
+| ОК | — | Обновления 4 дня назад, файрвол во всех профилях, NLA, Defender (сигнатуры 1 день), SMBv1 выключен, неудачных входов нет, 1С не от LocalSystem |
+
+## Сделано
+
+1. Локальная политика на WIN-APP-DEV (блокировка 10 попыток / 15 минут, длина 12).
+   Командная строка или PowerShell от администратора на WIN-APP-DEV:
+```
+net accounts /lockoutthreshold:10 /lockoutwindow:15 /lockoutduration:15 /minpwlen:12
+```
+2. Политика домена, PowerShell на контроллере домена. Проверено через
+   `Get-ADDefaultDomainPasswordPolicy`: LockoutThreshold 10, Duration и
+   ObservationWindow 00:15:00, MinPasswordLength 12, Complexity True,
+   MaxPasswordAge 42 дня, история 24.
+```
+Set-ADDefaultDomainPasswordPolicy -Identity ad.avantime.lv -LockoutThreshold 10 -LockoutDuration 00:15:00 -LockoutObservationWindow 00:15:00 -MinPasswordLength 12
+```
+
+## Открытые задачи
+
+1. **DEV-ADMIN удалён из AD** (`Remove-ADComputer -Identity DEV-ADMIN` на
+   контроллере домена). Не подтверждено, было ли это намеренно. Если нет —
+   восстановить из корзины AD (PowerShell на контроллере домена) или заново
+   ввести машину в домен под локальным администратором DEV-ADMIN:
+```
+Get-ADObject -Filter 'Name -like "DEV-ADMIN*"' -IncludeDeletedObjects | Restore-ADObject
+```
+2. **Общие папки на WIN-APP-DEV**: сначала выяснить, кто в них пишет, затем
+   заменить Everyone на Domain Users. PowerShell от администратора на WIN-APP-DEV:
+```
+foreach ($n in 'Incoming','Install','Testing') { Grant-SmbShareAccess -Name $n -AccountName 'AVANTIME\Domain Users' -AccessRight Change -Force; Revoke-SmbShareAccess -Name $n -AccountName 'Everyone' -Force }
+```
+3. **Встроенный Administrator на WIN-APP-DEV**: сначала убедиться, что вход
+   доменной учёткой работает. PowerShell от администратора на WIN-APP-DEV:
+```
+Disable-LocalUser -Name Administrator
+```
+4. **Шифрование RDP High**, PowerShell от администратора на WIN-APP-DEV:
+```
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name MinEncryptionLevel -Value 3
+```
+5. **Что за java на порту 1576**, PowerShell на WIN-APP-DEV:
+```
+Get-Process -Id (Get-NetTCPConnection -LocalPort 1576 -State Listen).OwningProcess | Select Name,Path
+```
+6. **Лицензия**: WIN-APP-DEV на Evaluation; после окончания пробного периода
+   сервер будет перезагружаться каждый час.
+7. **Аудит остальных**: запустить скрипт на ProdAdmin, web-avg и контроллере
+   домена; повторно на WIN-APP-DEV после исправлений.
+8. **Внешний периметр**: проверить проброс портов на роутере/файрволе на 10.20.x
+   и 10.40.x; просканировать внешний IP с машины **вне офиса**:
+```
+nmap -Pn -p 1-65535 ВНЕШНИЙ_IP
+```
+   Снаружи не должно быть 3389, 1540/1541/1545/1560–1591, 1433, 445, 5985/5986.
+   RDP — только через VPN или RD Gateway. Уточнить, какой VPN реально
+   используется снаружи (в сводке упоминался OpenVPN, Avantime Connect — WireGuard).
+9. **Блокировки в первые дни**, PowerShell на контроллере домена:
+```
+Get-WinEvent -FilterHashtable @{LogName='Security';Id=4740} -MaxEvents 20 | Select TimeCreated,@{n='User';e={$_.Properties[0].Value}},@{n='From';e={$_.Properties[1].Value}}
+```
+10. **1С и SQL** (вручную): администратор кластера 1С с паролем; в базах нет
+    пользователей без пароля; `sa` в SQL отключена или со сложным паролем;
+    бэкапы вне сервера, и у сервера нет к ним доступа на запись.

@@ -45,6 +45,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & C:\Security_Audit\Security-A
 | PROD-ADMIN | 10.40.0.30 | Windows 11 Pro; проверен и исправлен 31.10.2026 (0 критично, 4 предупреждения о портах) |
 | web-avg | 10.40.0.50 | Не проверен |
 | AVG-DC01 (контроллер домена) | 10.20.0.10 | Windows Server 2022; проверен 31.10.2026 |
+| AVG-DC-PROD (контроллер домена) | 10.40.0.10 | Windows Server 2022 **build 20348.169 — тоже не обновлялся с 2021**; Print Spooler отключён 31.10.2026; аудит не запускался |
 
 ## Результаты WIN-APP-DEV (20.10.2026 15:14): 1 критично, 18 предупреждений
 

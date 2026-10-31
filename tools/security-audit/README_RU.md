@@ -42,7 +42,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force; & C:\Security_Audit\Security-A
 |---|---|---|
 | WIN-APP-DEV | 10.20.0.20 | Проверен 20.10.2026, частично исправлен |
 | DEV-ADMIN | — | Windows 11 Pro; удалён из AD (см. открытые вопросы) |
-| PROD-ADMIN | 10.40.0.30 | Windows 11 Pro; проверен 31.10.2026 |
+| PROD-ADMIN | 10.40.0.30 | Windows 11 Pro; проверен и исправлен 31.10.2026 (0 критично, 4 предупреждения о портах) |
 | web-avg | 10.40.0.50 | Не проверен |
 | Контроллер домена | — | Изменена политика паролей домена; аудит не запускался |
 
@@ -75,6 +75,16 @@ Windows 11 Pro build 26200, в домене. Политика домена пр�
 | ИНФО | Учётки | Админы: AVANTIME\Domain Admins, AVANTIME\GG-DEV-Local-Admins, Administrator (отключён), AvantimeAdmin. У локального `alexkhar` пароль бессрочный |
 | ИНФО | Задачи | `\Avantime-Archive-PROD` запускает `Run-Prod-Archive.ps1` из профиля AvantimeAdmin; при смене пароля AvantimeAdmin проверить, от чьего имени работает задача |
 | ОК | — | Обновления сегодня, файрвол во всех профилях, NLA, Defender (сигнатуры 0 дней), SMBv1 выключен, неудачных входов нет |
+
+**Исправлено на PROD-ADMIN 31.10.2026** (повторный аудит 14:48: 0 критично, 4 предупреждения
+о портах 135/139/445/3389):
+- `net user AvantimeAdmin /passwordreq:yes`. Пароль не менялся; задача
+  `Avantime-Archive-PROD` (запуск от AvantimeAdmin, сохранённый пароль) работает, LastTaskResult 0.
+- OpenSSH Server остановлен и отключён (`Stop-Service sshd; Set-Service sshd -StartupType Disabled`).
+  Последний вход по SSH: 01.10.2026, avantimeadmin по паролю с 10.20.0.2 (VPN-шлюз).
+  Правило файрвола было только для Private, сеть DomainAuthenticated.
+- RDP MinEncryptionLevel = 3.
+- Share `Incoming`: Everyone (Full) удалён, добавлен AVANTIME\Domain Users (Change).
 
 ## Сделано
 
